@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/assets/fonts/PlusJakartaSans.woff2") format("woff2");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Figtree";
+  src: url("/assets/fonts/Figtree.woff2") format("woff2");
+  font-weight: 300 900;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.625rem;
+
+    /* Page background: warm neutral off-white */
+    --background: 0.972 0.006 85;
+    /* Card background: crisp white */
+    --card: 1 0 0;
+    --card-foreground: 0.16 0.012 264;
+    /* Popover */
+    --popover: 1 0 0;
+    --popover-foreground: 0.16 0.012 264;
+    /* Primary text near-black */
+    --foreground: 0.16 0.012 264;
+
+    /* Primary: deep teal/emerald */
+    --primary: 0.52 0.18 170;
+    --primary-foreground: 1 0 0;
+
+    /* Secondary/muted: warm light gray */
+    --secondary: 0.955 0.008 85;
+    --secondary-foreground: 0.16 0.012 264;
+    --muted: 0.955 0.008 85;
+    --muted-foreground: 0.5 0.012 264;
+
+    /* Accent: light teal wash */
+    --accent: 0.945 0.04 170;
+    --accent-foreground: 0.3 0.1 170;
+
+    /* Destructive #EF4444 */
+    --destructive: 0.628 0.22 25;
+    --destructive-foreground: 1 0 0;
+
+    /* Borders */
+    --border: 0.9 0.01 85;
+    --input: 0.9 0.01 85;
+    --ring: 0.52 0.18 170;
+
+    /* Lookup hero background — teal tinted */
+    --lookup-bg: 0.948 0.055 170;
+    /* Lookup hero border */
+    --lookup-border: 0.85 0.08 170;
+
+    /* Section colors by type */
+    --section-account: 0.945 0.04 240;
+    --section-account-border: 0.6 0.15 240;
+    --section-personal: 0.945 0.04 170;
+    --section-personal-border: 0.52 0.18 170;
+    --section-contact: 0.948 0.04 200;
+    --section-contact-border: 0.55 0.16 200;
+    --section-dates: 0.948 0.04 45;
+    --section-dates-border: 0.6 0.15 55;
+    --section-financials: 0.948 0.04 155;
+    --section-financials-border: 0.5 0.16 155;
+    --section-family: 0.948 0.04 280;
+    --section-family-border: 0.55 0.15 280;
+    --section-remarks: 0.948 0.04 30;
+    --section-remarks-border: 0.58 0.15 30;
+
+    /* Member ID highlight */
+    --member-id-bg: 0.97 0.04 85;
+    --member-id-border: 0.52 0.18 170;
+
+    --chart-1: 0.646 0.222 41.116;
+    --chart-2: 0.6 0.118 184.704;
+    --chart-3: 0.398 0.07 227.392;
+    --chart-4: 0.828 0.189 84.429;
+    --chart-5: 0.769 0.188 70.08;
+    --sidebar: 0.985 0 0;
+    --sidebar-foreground: 0.145 0 0;
+    --sidebar-primary: 0.205 0 0;
+    --sidebar-primary-foreground: 0.985 0 0;
+    --sidebar-accent: 0.97 0 0;
+    --sidebar-accent-foreground: 0.205 0 0;
+    --sidebar-border: 0.922 0 0;
+    --sidebar-ring: 0.708 0 0;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* Teal focus rings globally */
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px oklch(var(--ring) / 0.3);
+    border-color: oklch(var(--ring));
+  }
+}
