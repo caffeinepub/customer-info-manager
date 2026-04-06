@@ -302,15 +302,7 @@ export default function App() {
 
   // Payment History state
   const [paymentLookupMobile, setPaymentLookupMobile] = useState("");
-  const [paymentAccounts, setPaymentAccounts] = useState<
-    Array<{ memberId: string; index: number }>
-  >([]);
-  const [selectedPaymentMemberId, setSelectedPaymentMemberId] = useState<
-    string | null
-  >(null);
   const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([]);
-  const [isFetchingPaymentAccounts, setIsFetchingPaymentAccounts] =
-    useState(false);
   const [isFetchingPayments, setIsFetchingPayments] = useState(false);
 
   // Form state — flat CustomerRecord
@@ -636,65 +628,30 @@ export default function App() {
     }
   };
 
-  // Payment History — fetch accounts by mobile
-  const handleFetchPaymentAccounts = async () => {
-    const resolvedUrl = await getScriptUrl();
-    if (!resolvedUrl.trim()) {
-      toast.error("Apps Script URL not configured. Please set it in Settings.");
-      return;
-    }
+  // Payment History — fetch payments directly by mobile number
+  const handleFetchPayments = async () => {
     if (!paymentLookupMobile.trim()) {
       toast.error("Please enter a mobile number.");
       return;
     }
-    setIsFetchingPaymentAccounts(true);
-    setPaymentAccounts([]);
-    setSelectedPaymentMemberId(null);
-    setPaymentRows([]);
-    try {
-      const url = `${resolvedUrl}?action=fetchAll&mobile=${encodeURIComponent(paymentLookupMobile.trim())}`;
-      const res = await fetch(url);
-      const text = await res.text();
-      let parsed: { success: boolean; memberIds?: string[]; error?: string };
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        throw new Error(
-          "Invalid response from server. Check your Apps Script URL.",
-        );
-      }
-      if (!parsed.success) throw new Error(parsed.error || "Fetch failed.");
-      const ids = parsed.memberIds || [];
-      setPaymentAccounts(ids.map((id, i) => ({ memberId: id, index: i })));
-      if (ids.length === 0) {
-        toast("No accounts found for this mobile number.");
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Fetch failed.");
-    } finally {
-      setIsFetchingPaymentAccounts(false);
-    }
-  };
-
-  // Payment History — fetch payments for a selected Member ID
-  const handleFetchPayments = async (memberId: string) => {
     const resolvedUrl = await getScriptUrl();
     if (!resolvedUrl.trim()) {
       toast.error("Apps Script URL not configured. Please set it in Settings.");
       return;
     }
-    setSelectedPaymentMemberId(memberId);
     setIsFetchingPayments(true);
     setPaymentRows([]);
     try {
-      const url = `${resolvedUrl}?action=fetchPayments&phone=${encodeURIComponent(paymentLookupMobile.trim())}&memberId=${encodeURIComponent(memberId.trim())}`;
+      const url = `${resolvedUrl}?action=fetchPayments&phone=${encodeURIComponent(paymentLookupMobile.trim())}`;
       const res = await fetch(url);
       const text = await res.text();
       let parsed: { success: boolean; payments?: PaymentRow[]; error?: string };
       try {
         parsed = JSON.parse(text);
       } catch {
-        throw new Error("Invalid response from server.");
+        throw new Error(
+          "Invalid response from server. Check your Apps Script URL.",
+        );
       }
       if (!parsed.success) throw new Error(parsed.error || "Fetch failed.");
       const rows = (parsed.payments || []).slice().sort((a, b) => {
@@ -707,6 +664,9 @@ export default function App() {
         return parseDate(b.date) - parseDate(a.date);
       });
       setPaymentRows(rows);
+      if (rows.length === 0) {
+        toast("No payments found for this mobile number.");
+      }
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to load payments.",
@@ -733,8 +693,6 @@ export default function App() {
     setSelectedIndex(null);
     // Reset payment state on mode switch
     setPaymentLookupMobile("");
-    setPaymentAccounts([]);
-    setSelectedPaymentMemberId(null);
     setPaymentRows([]);
   };
 
@@ -1063,9 +1021,6 @@ export default function App() {
                     style={{ color: "oklch(0.38 0.12 170)" }}
                   >
                     Member ID
-                  </span>
-                  <span className="text-[11px] text-muted-foreground italic">
-                    Auto-fills Group Code &amp; Membership Number
                   </span>
                 </div>
                 <div className="flex flex-col gap-1.5 max-w-xs">
@@ -1620,91 +1575,36 @@ export default function App() {
                     className="flex-1 h-11 text-[15px] rounded-xl bg-white border-border/80"
                     data-ocid="payment.lookup.input"
                     onKeyDown={(e) =>
-                      e.key === "Enter" && handleFetchPaymentAccounts()
+                      e.key === "Enter" && handleFetchPayments()
                     }
                   />
                   <Button
-                    onClick={handleFetchPaymentAccounts}
-                    disabled={isFetchingPaymentAccounts}
+                    onClick={handleFetchPayments}
+                    disabled={isFetchingPayments}
                     className="h-11 px-6 rounded-xl font-semibold text-[14px] shrink-0 text-white transition-all"
                     style={{
-                      background: isFetchingPaymentAccounts
+                      background: isFetchingPayments
                         ? "oklch(0.52 0.18 170 / 0.7)"
                         : "linear-gradient(135deg, oklch(0.52 0.18 170) 0%, oklch(0.48 0.16 185) 100%)",
-                      boxShadow: isFetchingPaymentAccounts
+                      boxShadow: isFetchingPayments
                         ? "none"
                         : "0 2px 12px 0 oklch(0.52 0.18 170 / 0.4)",
                     }}
                     data-ocid="payment.lookup.button"
                   >
-                    {isFetchingPaymentAccounts ? (
+                    {isFetchingPayments ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
                     ) : (
                       <Search className="h-4 w-4 mr-2" />
                     )}
-                    {isFetchingPaymentAccounts ? "Fetching..." : "Fetch"}
+                    {isFetchingPayments ? "Fetching..." : "Fetch"}
                   </Button>
-                </div>
-
-                {/* Account cards grid */}
-                <div className="mt-5">
-                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
-                    {Array.from({ length: 10 }, (_, idx) => {
-                      const acc = paymentAccounts[idx] ?? null;
-                      const boxNum = idx + 1;
-                      const isSelected =
-                        acc !== null &&
-                        selectedPaymentMemberId === acc.memberId;
-                      const isLoading = isFetchingPayments && isSelected;
-                      return (
-                        <button
-                          key={boxNum}
-                          type="button"
-                          onClick={() =>
-                            acc && handleFetchPayments(acc.memberId)
-                          }
-                          disabled={acc === null || isFetchingPayments}
-                          className={`relative flex flex-col items-center justify-center rounded-xl border-2 text-center transition-all ${
-                            acc === null
-                              ? "border-dashed border-border/40 bg-muted/20 cursor-not-allowed opacity-50"
-                              : isSelected
-                                ? "border-teal-500 bg-teal-50 shadow-md cursor-pointer"
-                                : "border-border bg-white hover:border-teal-400 hover:bg-teal-50/50 cursor-pointer"
-                          }`}
-                          style={{
-                            minHeight: "60px",
-                            padding: "6px 4px",
-                            ...(isSelected
-                              ? {
-                                  borderColor: "oklch(0.52 0.18 170)",
-                                  boxShadow:
-                                    "0 0 0 3px oklch(0.52 0.18 170 / 0.15)",
-                                }
-                              : {}),
-                          }}
-                          data-ocid={`payment.lookup.item.${boxNum}`}
-                        >
-                          {isLoading ? (
-                            <Loader2 className="h-3 w-3 animate-spin text-teal-600" />
-                          ) : acc !== null ? (
-                            <span className="text-[10px] font-bold text-foreground leading-tight break-all px-0.5">
-                              {acc.memberId || `#${boxNum}`}
-                            </span>
-                          ) : (
-                            <span className="text-[11px] text-muted-foreground/40 font-medium">
-                              {boxNum}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
               </div>
             </div>
 
             {/* Payments table — shown when an account is selected */}
-            {selectedPaymentMemberId !== null && (
+            {paymentRows.length > 0 && (
               <div
                 className="rounded-2xl border overflow-hidden"
                 style={{
@@ -1736,7 +1636,7 @@ export default function App() {
                     Payment History
                   </span>
                   <span className="ml-1 text-[11px] text-muted-foreground">
-                    — {selectedPaymentMemberId}
+                    — {paymentLookupMobile}
                   </span>
                 </div>
 
