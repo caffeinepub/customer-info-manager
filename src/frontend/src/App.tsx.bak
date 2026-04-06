@@ -30,9 +30,8 @@ import {
   Wallet,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
-import { createActorWithConfig } from "./config";
 
 interface CustomerRecord {
   memberId: string;
@@ -62,6 +61,21 @@ interface CustomerRecord {
 }
 
 const DEFAULT_SCHEME_OPTIONS = ["3000", "5000", "10000", "15000"];
+
+function loadSchemeOptions(): string[] {
+  try {
+    const stored = localStorage.getItem("schemeOptions");
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length === 4) return parsed;
+    }
+  } catch {}
+  return [...DEFAULT_SCHEME_OPTIONS];
+}
+
+function loadDefaultGiftCard(): string {
+  return localStorage.getItem("defaultGiftCardAmount") || "11000";
+}
 
 function calcPaidAmount(
   schemeAmount: string | number,
@@ -265,8 +279,10 @@ export default function App() {
   // Mode switcher
   const [mode, setMode] = useState<AppMode>("new");
 
-  // Cached script URL — loaded from canister on mount, refreshed after Settings save
-  const cachedScriptUrl = useRef<string>("");
+  // Cached script URL — loaded once on mount, refreshed after Settings save
+  const cachedScriptUrl = useRef<string>(
+    localStorage.getItem("scriptUrl") || "",
+  );
 
   // Lookup state
   const [lookupMobile, setLookupMobile] = useState("");
@@ -279,13 +295,16 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
 
   // Form state — flat CustomerRecord
-  const [form, setForm] = useState<CustomerRecord>(() => ({
-    ...emptyRecord,
-    schemeAmount: "5000",
-    installmentAmount: String(5000 * 15),
-    giftCardAmount: "11000",
-    paidAmount: calcPaidAmount("5000", "11000"),
-  }));
+  const [form, setForm] = useState<CustomerRecord>(() => {
+    const scheme = loadSchemeOptions()[1] ?? "5000";
+    return {
+      ...emptyRecord,
+      schemeAmount: scheme,
+      installmentAmount: String(Number(scheme) * 15),
+      giftCardAmount: loadDefaultGiftCard(),
+      paidAmount: calcPaidAmount(scheme, loadDefaultGiftCard()),
+    };
+  });
 
   // Settings dialog
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -293,12 +312,9 @@ export default function App() {
   const [urlWarning, setUrlWarning] = useState("");
 
   // Scheme options (4 editable values for dropdown)
-  const [schemeOptions, setSchemeOptions] = useState<string[]>([
-    ...DEFAULT_SCHEME_OPTIONS,
-  ]);
-  // Settings load state
-  const [_settingsLoaded, setSettingsLoaded] = useState(false);
-  const [_settingsLoadError, setSettingsLoadError] = useState(false);
+  const [schemeOptions, setSchemeOptions] = useState<string[]>(() =>
+    loadSchemeOptions(),
+  );
   // Temp state for settings editing
   const [settingsSchemeOptions, setSettingsSchemeOptions] = useState<string[]>([
     ...DEFAULT_SCHEME_OPTIONS,
@@ -333,42 +349,12 @@ export default function App() {
     });
   }, []);
 
-  // Load settings from canister on mount
-  useEffect(() => {
-    (async () => {
-      try {
-        const actor = await createActorWithConfig();
-        const [url, optsJson, giftCard] = (await (
-          actor as any
-        ).getSettings()) as [string, string, string];
-        cachedScriptUrl.current = url;
-        // Parse scheme options
-        let opts = DEFAULT_SCHEME_OPTIONS;
-        try {
-          const parsed = JSON.parse(optsJson);
-          if (Array.isArray(parsed) && parsed.length === 4) opts = parsed;
-        } catch {}
-        const defaultGift = giftCard || "11000";
-        const scheme = opts[1] ?? "5000";
-        setSchemeOptions(opts);
-        setForm({
-          ...emptyRecord,
-          schemeAmount: scheme,
-          installmentAmount: String(Number(scheme) * 15),
-          giftCardAmount: defaultGift,
-          paidAmount: calcPaidAmount(scheme, defaultGift),
-        });
-        setSettingsLoaded(true);
-      } catch {
-        setSettingsLoadError(true);
-        setSettingsLoaded(true);
-      }
-    })();
-  }, []);
-
-  /** Get the cached script URL */
+  /** Get the cached script URL from localStorage */
   const getScriptUrl = async (): Promise<string> => {
-    return cachedScriptUrl.current;
+    if (cachedScriptUrl.current) return cachedScriptUrl.current;
+    const url = localStorage.getItem("scriptUrl") || "";
+    cachedScriptUrl.current = url;
+    return url;
   };
 
   // Fetch all accounts for a mobile number
@@ -663,8 +649,8 @@ export default function App() {
   // Mode switch — resets form and lookup state
   const handleModeSwitch = (newMode: AppMode) => {
     setMode(newMode);
-    const scheme = schemeOptions[1] ?? "5000";
-    const giftCard = form.giftCardAmount || "11000";
+    const scheme = loadSchemeOptions()[1] ?? "5000";
+    const giftCard = loadDefaultGiftCard();
     setForm({
       ...emptyRecord,
       schemeAmount: scheme,
@@ -679,8 +665,8 @@ export default function App() {
 
   // Clear form
   const handleClear = () => {
-    const scheme = schemeOptions[1] ?? "5000";
-    const giftCard = form.giftCardAmount || "11000";
+    const scheme = loadSchemeOptions()[1] ?? "5000";
+    const giftCard = loadDefaultGiftCard();
     setForm({
       ...emptyRecord,
       schemeAmount: scheme,
@@ -694,13 +680,13 @@ export default function App() {
     toast("Form cleared.");
   };
 
-  // Open settings — read from canister state already loaded
+  // Open settings — load from localStorage
   const handleOpenSettings = () => {
     setSettingsOpen(true);
     setUrlWarning("");
-    setScriptUrl(cachedScriptUrl.current);
-    setSettingsSchemeOptions([...schemeOptions]);
-    setSettingsGiftCardDefault(form.giftCardAmount || "11000");
+    setScriptUrl(localStorage.getItem("scriptUrl") || "");
+    setSettingsSchemeOptions(loadSchemeOptions());
+    setSettingsGiftCardDefault(loadDefaultGiftCard());
   };
 
   // Handle URL input change — validate and set warning
@@ -718,36 +704,22 @@ export default function App() {
     }
   };
 
-  // Save settings — persists to canister
-  const handleSaveSettings = async () => {
-    try {
-      const actor = await createActorWithConfig();
-      await (actor as any).saveSettings(
-        scriptUrl,
-        JSON.stringify(settingsSchemeOptions),
-        settingsGiftCardDefault,
-      );
-      cachedScriptUrl.current = scriptUrl;
-      setSchemeOptions([...settingsSchemeOptions]);
-      setSettingsOpen(false);
-      toast.success(
-        scriptUrl.trim()
-          ? "Settings saved successfully."
-          : "Settings saved (script URL cleared).",
-      );
-      // Update form defaults with new gift card
-      setForm((prev) => {
-        const newGift = settingsGiftCardDefault;
-        return {
-          ...prev,
-          giftCardAmount: newGift,
-          paidAmount: calcPaidAmount(prev.schemeAmount, newGift),
-        };
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to save settings: ${message}`);
-    }
+  // Save settings — persists to localStorage
+  const handleSaveSettings = () => {
+    localStorage.setItem("scriptUrl", scriptUrl);
+    localStorage.setItem(
+      "schemeOptions",
+      JSON.stringify(settingsSchemeOptions),
+    );
+    localStorage.setItem("defaultGiftCardAmount", settingsGiftCardDefault);
+    cachedScriptUrl.current = scriptUrl;
+    setSchemeOptions([...settingsSchemeOptions]);
+    setSettingsOpen(false);
+    toast.success(
+      scriptUrl.trim()
+        ? "Settings saved successfully."
+        : "Settings saved (script URL cleared).",
+    );
   };
 
   // Build the 10-box grid
@@ -1219,7 +1191,8 @@ export default function App() {
                         const val = e.target.value;
                         const installment = String(Number(val) * 15);
                         setForm((prev) => {
-                          const gc = prev.giftCardAmount || "11000";
+                          const gc =
+                            prev.giftCardAmount || loadDefaultGiftCard();
                           return {
                             ...prev,
                             schemeAmount: val,

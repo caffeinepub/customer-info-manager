@@ -28,6 +28,8 @@ export interface http_request_result {
 export interface _SERVICE {
   'fetchCustomer' : ActorMethod<[string, bigint], string>,
   'getScriptUrl' : ActorMethod<[], string>,
+  'getSettings' : ActorMethod<[], [string, string, string]>,
+  'saveSettings' : ActorMethod<[string, string, string], undefined>,
   'setScriptUrl' : ActorMethod<[string], undefined>,
   'transform' : ActorMethod<[TransformationInput], TransformationOutput>,
   'updateCustomer' : ActorMethod<[string], string>,

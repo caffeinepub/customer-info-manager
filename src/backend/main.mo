@@ -3,14 +3,29 @@ import Nat "mo:core/Nat";
 import Text "mo:core/Text";
 
 actor {
+  // ── Persisted settings ────────────────────────────────────────────────────
   var scriptUrl : Text = "";
+  var schemeOptions : Text = "[\"3000\",\"5000\",\"10000\",\"15000\"]";
+  var defaultGiftCardAmount : Text = "11000";
 
   // Helper function for the HTTP transform callback
   public query func transform(input : Outcall.TransformationInput) : async Outcall.TransformationOutput {
     Outcall.transform(input);
   };
 
-  // Admin: Set the Google Apps Script Web App URL
+  // ── Settings: get all three in one call ───────────────────────────────────
+  public query func getSettings() : async (Text, Text, Text) {
+    (scriptUrl, schemeOptions, defaultGiftCardAmount);
+  };
+
+  // ── Settings: save all three in one call ──────────────────────────────────
+  public func saveSettings(url : Text, opts : Text, giftCard : Text) : async () {
+    scriptUrl := url;
+    schemeOptions := opts;
+    defaultGiftCardAmount := giftCard;
+  };
+
+  // ── Legacy individual getters/setters (kept for compatibility) ────────────
   public func setScriptUrl(url : Text) : async () {
     scriptUrl := url;
   };
@@ -28,8 +43,7 @@ actor {
     await Outcall.httpGetRequest(url, [], transform);
   };
 
-  // Save/update customer record — sent as GET with action=save&data=<encoded JSON>
-  // Using GET avoids the Google Apps Script POST redirect that returns HTML instead of JSON
+  // Save/update customer record
   public func updateCustomer(jsonBody : Text) : async Text {
     if (scriptUrl == "") {
       return "{\"error\":\"Apps Script URL not configured\"}";

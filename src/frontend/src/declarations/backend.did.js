@@ -30,6 +30,8 @@ export const TransformationOutput = IDL.Record({
 export const idlService = IDL.Service({
   'fetchCustomer' : IDL.Func([IDL.Text, IDL.Nat], [IDL.Text], []),
   'getScriptUrl' : IDL.Func([], [IDL.Text], ['query']),
+  'getSettings' : IDL.Func([], [IDL.Text, IDL.Text, IDL.Text], ['query']),
+  'saveSettings' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [], []),
   'setScriptUrl' : IDL.Func([IDL.Text], [], []),
   'transform' : IDL.Func(
       [TransformationInput],
@@ -61,6 +63,8 @@ export const idlFactory = ({ IDL }) => {
   return IDL.Service({
     'fetchCustomer' : IDL.Func([IDL.Text, IDL.Nat], [IDL.Text], []),
     'getScriptUrl' : IDL.Func([], [IDL.Text], ['query']),
+    'getSettings' : IDL.Func([], [IDL.Text, IDL.Text, IDL.Text], ['query']),
+    'saveSettings' : IDL.Func([IDL.Text, IDL.Text, IDL.Text], [], []),
     'setScriptUrl' : IDL.Func([IDL.Text], [], []),
     'transform' : IDL.Func(
         [TransformationInput],
