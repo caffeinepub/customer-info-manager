@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Building2,
   Calendar,
+  CheckCircle2,
   ClipboardList,
   Loader2,
   MessageSquare,
@@ -27,11 +28,10 @@ import {
   User,
   Users,
   Wallet,
+  XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { backendInterface as FullBackendInterface } from "./backend.d";
-import { useActor } from "./hooks/useActor";
 
 interface CustomerRecord {
   memberId: string;
@@ -45,8 +45,10 @@ interface CustomerRecord {
   altMobileNumber: string;
   dateOfBirth: string;
   anniversaryDate: string;
-  amount: string;
+  paidAmount: string;
   giftCardAmount: string;
+  schemeAmount: string;
+  installmentAmount: string;
   spouseName: string;
   spouseBirthDate: string;
   children1Name: string;
@@ -56,6 +58,40 @@ interface CustomerRecord {
   children3Name: string;
   children3BirthDate: string;
   remark: string;
+}
+
+const DEFAULT_SCHEME_OPTIONS = ["3000", "5000", "10000", "15000"];
+
+function loadSchemeOptions(): string[] {
+  try {
+    const stored = localStorage.getItem("schemeOptions");
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length === 4) return parsed;
+    }
+  } catch {}
+  return [...DEFAULT_SCHEME_OPTIONS];
+}
+
+function loadDefaultGiftCard(): string {
+  return localStorage.getItem("defaultGiftCardAmount") || "11000";
+}
+
+function calcPaidAmount(
+  schemeAmount: string | number,
+  giftCardAmount: string | number,
+): string {
+  const scheme = Number(schemeAmount) || 5000;
+  const gift = Number(giftCardAmount) || 11000;
+  if (scheme <= 0) return "0";
+  // Find first multiple of scheme > gift where (multiple - gift) < 10000
+  let multiple = Math.ceil(gift / scheme) * scheme;
+  if (multiple <= gift) multiple += scheme;
+  while (multiple - gift >= 10000) {
+    // This shouldn't happen with normal values, but safety fallback
+    break;
+  }
+  return String(multiple - gift);
 }
 
 const emptyRecord: CustomerRecord = {
@@ -70,8 +106,10 @@ const emptyRecord: CustomerRecord = {
   altMobileNumber: "",
   dateOfBirth: "",
   anniversaryDate: "",
-  amount: "",
+  paidAmount: "",
   giftCardAmount: "",
+  schemeAmount: "",
+  installmentAmount: "",
   spouseName: "",
   spouseBirthDate: "",
   children1Name: "",
@@ -87,7 +125,7 @@ const emptyRecord: CustomerRecord = {
 interface SectionHeadingProps {
   children: React.ReactNode;
   icon: React.ReactNode;
-  color: string; // tailwind bg class for border
+  color: string;
   bgClass: string;
   borderClass: string;
   textClass: string;
@@ -167,12 +205,18 @@ function Field({
         value={value}
         onChange={(e) =>
           onChange(
-            type === "date" ? e.target.value : e.target.value.toUpperCase(),
+            type === "date" || type === "number"
+              ? e.target.value
+              : e.target.value.toUpperCase(),
           )
         }
         placeholder={placeholder}
         readOnly={readOnly}
-        style={type !== "date" ? { textTransform: "uppercase" } : undefined}
+        style={
+          type !== "date" && type !== "number"
+            ? { textTransform: "uppercase" }
+            : undefined
+        }
         className={`h-10 text-[14px] rounded-lg border-border/80 transition-colors focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary ${
           readOnly
             ? "bg-muted/60 cursor-default text-muted-foreground"
@@ -229,59 +273,16 @@ function toDateInput(value: string): string {
   return "";
 }
 
-/** Poll for actor availability, resolving once actor is non-null or timeout is reached. */
-function waitForActor(
-  getActor: () => FullBackendInterface | null,
-  intervalMs = 500,
-  timeoutMs = 3000,
-): Promise<FullBackendInterface | null> {
-  return new Promise((resolve) => {
-    const existing = getActor();
-    if (existing) {
-      resolve(existing);
-      return;
-    }
-    let elapsed = 0;
-    const timer = setInterval(() => {
-      elapsed += intervalMs;
-      const a = getActor();
-      if (a) {
-        clearInterval(timer);
-        resolve(a);
-      } else if (elapsed >= timeoutMs) {
-        clearInterval(timer);
-        resolve(null);
-      }
-    }, intervalMs);
-  });
-}
-
 type AppMode = "new" | "update";
 
 export default function App() {
-  const { actor: rawActor } = useActor();
-  const actor = rawActor as FullBackendInterface | null;
-
   // Mode switcher
   const [mode, setMode] = useState<AppMode>("new");
 
   // Cached script URL — loaded once on mount, refreshed after Settings save
-  const cachedScriptUrl = useRef<string>("");
-  const [scriptUrlLoaded, setScriptUrlLoaded] = useState(false);
-
-  // Load script URL from canister on mount
-  useEffect(() => {
-    if (!actor || scriptUrlLoaded) return;
-    actor
-      .getScriptUrl()
-      .then((url) => {
-        cachedScriptUrl.current = url;
-        setScriptUrlLoaded(true);
-      })
-      .catch(() => {
-        setScriptUrlLoaded(true);
-      });
-  }, [actor, scriptUrlLoaded]);
+  const cachedScriptUrl = useRef<string>(
+    localStorage.getItem("scriptUrl") || "",
+  );
 
   // Lookup state
   const [lookupMobile, setLookupMobile] = useState("");
@@ -294,14 +295,32 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
 
   // Form state — flat CustomerRecord
-  const [form, setForm] = useState<CustomerRecord>({ ...emptyRecord });
+  const [form, setForm] = useState<CustomerRecord>(() => {
+    const scheme = loadSchemeOptions()[1] ?? "5000";
+    return {
+      ...emptyRecord,
+      schemeAmount: scheme,
+      installmentAmount: String(Number(scheme) * 15),
+      giftCardAmount: loadDefaultGiftCard(),
+      paidAmount: calcPaidAmount(scheme, loadDefaultGiftCard()),
+    };
+  });
 
   // Settings dialog
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scriptUrl, setScriptUrl] = useState("");
-  const [isLoadingUrl, setIsLoadingUrl] = useState(false);
-  const [isSavingUrl, setIsSavingUrl] = useState(false);
   const [urlWarning, setUrlWarning] = useState("");
+
+  // Scheme options (4 editable values for dropdown)
+  const [schemeOptions, setSchemeOptions] = useState<string[]>(() =>
+    loadSchemeOptions(),
+  );
+  // Temp state for settings editing
+  const [settingsSchemeOptions, setSettingsSchemeOptions] = useState<string[]>([
+    ...DEFAULT_SCHEME_OPTIONS,
+  ]);
+  const [settingsGiftCardDefault, setSettingsGiftCardDefault] =
+    useState("11000");
 
   const setField = useCallback(
     <K extends keyof CustomerRecord>(key: K, value: CustomerRecord[K]) => {
@@ -330,16 +349,15 @@ export default function App() {
     });
   }, []);
 
-  /** Get the cached script URL, or fetch from canister if not yet loaded */
+  /** Get the cached script URL from localStorage */
   const getScriptUrl = async (): Promise<string> => {
     if (cachedScriptUrl.current) return cachedScriptUrl.current;
-    if (!actor) return "";
-    const url = await actor.getScriptUrl();
+    const url = localStorage.getItem("scriptUrl") || "";
     cachedScriptUrl.current = url;
     return url;
   };
 
-  // Fetch all accounts for a mobile number — shows account selection boxes
+  // Fetch all accounts for a mobile number
   const handleFetch = async () => {
     if (!lookupMobile.trim()) {
       toast.error("Please enter a mobile number to search.");
@@ -373,7 +391,6 @@ export default function App() {
         return;
       }
       if (Array.isArray(parsed.memberIds)) {
-        // New format: { success: true, memberIds: ["025/01", "026/02", ...] }
         const accounts = (parsed.memberIds as string[])
           .slice(0, 10)
           .map((mid, i) => ({ memberId: mid, index: i + 1 }));
@@ -386,7 +403,6 @@ export default function App() {
           );
         }
       } else if (Array.isArray(parsed.accounts)) {
-        // Old format: { accounts: [{ memberId, rank }] }
         const accounts = (
           parsed.accounts as Array<{ memberId: string; rank: number }>
         )
@@ -401,7 +417,6 @@ export default function App() {
           );
         }
       } else if (parsed.success && parsed.data) {
-        // Fallback: old script that returns single record
         const data = parsed.data as Record<string, unknown>;
         const memberId = (data.memberId ?? "") as string;
         setLookupAccounts([{ memberId, index: 1 }]);
@@ -499,11 +514,32 @@ export default function App() {
             data.AnniversaryDate ??
             "") as string,
         ),
-        amount: (data.amount ?? data.Amount ?? "") as string,
+        paidAmount: (data.paidAmount ??
+          data.paid_amount ??
+          data.PaidAmount ??
+          data.amount ??
+          data.Amount ??
+          "") as string,
         giftCardAmount: (data.giftCardAmount ??
           data.gift_card_amount ??
           data.GiftCardAmount ??
           "") as string,
+        schemeAmount: (data.schemeAmount ??
+          data.scheme_amount ??
+          data.SchemeAmount ??
+          "") as string,
+        installmentAmount: (() => {
+          const raw = (data.installmentAmount ??
+            data.installment_amount ??
+            data.InstallmentAmount ??
+            "") as string;
+          if (raw) return raw;
+          const scheme = (data.schemeAmount ??
+            data.scheme_amount ??
+            data.SchemeAmount ??
+            "") as string;
+          return scheme ? String(Number(scheme) * 15) : "";
+        })(),
         spouseName: (data.spouseName ??
           data.spouse_name ??
           data.SpouseName ??
@@ -555,7 +591,7 @@ export default function App() {
     }
   };
 
-  // Save/Update customer — calls Google Apps Script directly from browser
+  // Save/Update customer
   const handleSave = async () => {
     if (!form.memberId.trim()) {
       toast.error(
@@ -613,7 +649,15 @@ export default function App() {
   // Mode switch — resets form and lookup state
   const handleModeSwitch = (newMode: AppMode) => {
     setMode(newMode);
-    setForm({ ...emptyRecord });
+    const scheme = loadSchemeOptions()[1] ?? "5000";
+    const giftCard = loadDefaultGiftCard();
+    setForm({
+      ...emptyRecord,
+      schemeAmount: scheme,
+      installmentAmount: String(Number(scheme) * 15),
+      giftCardAmount: giftCard,
+      paidAmount: calcPaidAmount(scheme, giftCard),
+    });
     setLookupMobile("");
     setLookupAccounts([]);
     setSelectedIndex(null);
@@ -621,28 +665,28 @@ export default function App() {
 
   // Clear form
   const handleClear = () => {
-    setForm({ ...emptyRecord });
+    const scheme = loadSchemeOptions()[1] ?? "5000";
+    const giftCard = loadDefaultGiftCard();
+    setForm({
+      ...emptyRecord,
+      schemeAmount: scheme,
+      installmentAmount: String(Number(scheme) * 15),
+      giftCardAmount: giftCard,
+      paidAmount: calcPaidAmount(scheme, giftCard),
+    });
     setLookupMobile("");
     setLookupAccounts([]);
     setSelectedIndex(null);
     toast("Form cleared.");
   };
 
-  // Open settings — retry actor availability up to 3 seconds
-  const handleOpenSettings = async () => {
+  // Open settings — load from localStorage
+  const handleOpenSettings = () => {
     setSettingsOpen(true);
     setUrlWarning("");
-    setIsLoadingUrl(true);
-    try {
-      const resolvedActor = await waitForActor(() => actor);
-      if (!resolvedActor) return;
-      const url = await resolvedActor.getScriptUrl();
-      setScriptUrl(url);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoadingUrl(false);
-    }
+    setScriptUrl(localStorage.getItem("scriptUrl") || "");
+    setSettingsSchemeOptions(loadSchemeOptions());
+    setSettingsGiftCardDefault(loadDefaultGiftCard());
   };
 
   // Handle URL input change — validate and set warning
@@ -660,37 +704,34 @@ export default function App() {
     }
   };
 
-  // Save settings URL — persists to canister and refreshes cached URL
-  const handleSaveUrl = async () => {
-    if (!actor) {
-      toast.error("Backend not ready.");
-      return;
-    }
-    setIsSavingUrl(true);
-    try {
-      await actor.setScriptUrl(scriptUrl);
-      // Update the in-memory cache so next fetch/save uses the new URL immediately
-      cachedScriptUrl.current = scriptUrl;
-      setSettingsOpen(false);
-      toast.success(
-        scriptUrl.trim()
-          ? "Script URL saved successfully."
-          : "Script URL cleared.",
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to save script URL: ${message}`);
-      console.error(err);
-    } finally {
-      setIsSavingUrl(false);
-    }
+  // Save settings — persists to localStorage
+  const handleSaveSettings = () => {
+    localStorage.setItem("scriptUrl", scriptUrl);
+    localStorage.setItem(
+      "schemeOptions",
+      JSON.stringify(settingsSchemeOptions),
+    );
+    localStorage.setItem("defaultGiftCardAmount", settingsGiftCardDefault);
+    cachedScriptUrl.current = scriptUrl;
+    setSchemeOptions([...settingsSchemeOptions]);
+    setSettingsOpen(false);
+    toast.success(
+      scriptUrl.trim()
+        ? "Settings saved successfully."
+        : "Settings saved (script URL cleared).",
+    );
   };
 
-  // Build the 10-box grid: filled with account data or empty placeholders
+  // Build the 10-box grid
   const accountBoxes = Array.from({ length: 10 }, (_, i) => {
     const acc = lookupAccounts[i];
     return acc ?? null;
   });
+
+  // Scheme amount default: pick first option that matches "5000", else first option
+  const defaultSchemeAmount = schemeOptions.includes("5000")
+    ? "5000"
+    : (schemeOptions[0] ?? "5000");
 
   return (
     <div className="min-h-screen bg-background">
@@ -708,7 +749,6 @@ export default function App() {
       >
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {/* Logo with glow */}
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center"
               style={{
@@ -746,7 +786,7 @@ export default function App() {
       </header>
 
       {/* ── Main content ───────────────────────────────────────── */}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 animate-fade-in">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         {/* ── Mode Switcher ─────────────────────────────────────────── */}
         <div
           className="flex rounded-xl overflow-hidden border border-border mb-6 bg-muted/40 p-1 gap-1"
@@ -780,7 +820,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* ── Lookup hero block — only shown in Update mode ────── */}
+        {/* ── Lookup block — only in Update mode ───────────────── */}
         {mode === "update" && (
           <div
             className="rounded-2xl border overflow-hidden mb-6"
@@ -791,47 +831,25 @@ export default function App() {
               boxShadow:
                 "0 2px 20px 0 oklch(0.52 0.18 170 / 0.12), 0 1px 4px 0 rgba(0,0,0,0.06)",
             }}
+            data-ocid="lookup.card"
           >
             <div className="px-6 pt-5 pb-6">
-              {/* Step label */}
-              <div className="flex items-center gap-2 mb-4">
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
-                  style={{ background: "oklch(0.52 0.18 170)" }}
-                >
-                  1
-                </div>
-                <p
-                  className="text-[11px] font-bold uppercase tracking-widest"
-                  style={{ color: "oklch(0.38 0.12 170)" }}
-                >
-                  Start here — Look up customer card
-                </p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row gap-3 items-end">
-                <div className="flex-1 flex flex-col gap-1.5">
-                  <Label
-                    htmlFor="lookup-mobile"
-                    className="text-[11px] font-semibold uppercase tracking-wide"
-                    style={{ color: "oklch(0.42 0.1 170)" }}
-                  >
-                    Mobile Number <span className="text-destructive">*</span>
-                  </Label>
-                  <Input
-                    id="lookup-mobile"
-                    type="tel"
-                    value={lookupMobile}
-                    onChange={(e) =>
-                      setLookupMobile(e.target.value.toUpperCase())
-                    }
-                    placeholder="Enter mobile number to search"
-                    style={{ textTransform: "uppercase" }}
-                    className="h-11 text-[14px] rounded-xl bg-white border-white/80 shadow-xs focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary"
-                    onKeyDown={(e) => e.key === "Enter" && handleFetch()}
-                    data-ocid="lookup.input"
-                  />
-                </div>
+              <p
+                className="text-[11px] font-bold uppercase tracking-widest mb-4"
+                style={{ color: "oklch(0.38 0.12 170)" }}
+              >
+                Look Up Customer
+              </p>
+              <div className="flex gap-3">
+                <Input
+                  type="tel"
+                  value={lookupMobile}
+                  onChange={(e) => setLookupMobile(e.target.value)}
+                  placeholder="Enter mobile number…"
+                  className="flex-1 h-11 text-[15px] rounded-xl bg-white border-border/80"
+                  data-ocid="lookup.input"
+                  onKeyDown={(e) => e.key === "Enter" && handleFetch()}
+                />
                 <Button
                   onClick={handleFetch}
                   disabled={isFetching}
@@ -862,7 +880,9 @@ export default function App() {
                   style={{ color: "oklch(0.42 0.1 170)" }}
                 >
                   {lookupAccounts.length > 0
-                    ? `${lookupAccounts.length} account${lookupAccounts.length !== 1 ? "s" : ""} found — click to load`
+                    ? `${lookupAccounts.length} account${
+                        lookupAccounts.length !== 1 ? "s" : ""
+                      } found — click to load`
                     : "Account cards — enter a mobile number and click Fetch"}
                 </p>
                 <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
@@ -902,11 +922,9 @@ export default function App() {
                         {isLoading ? (
                           <Loader2 className="h-3 w-3 animate-spin text-teal-600" />
                         ) : acc !== null ? (
-                          <>
-                            <span className="text-[10px] font-bold text-foreground leading-tight break-all px-0.5">
-                              {acc.memberId || `#${boxNum}`}
-                            </span>
-                          </>
+                          <span className="text-[10px] font-bold text-foreground leading-tight break-all px-0.5">
+                            {acc.memberId || `#${boxNum}`}
+                          </span>
                         ) : (
                           <span className="text-[11px] text-muted-foreground/40 font-medium">
                             {boxNum}
@@ -921,26 +939,33 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Form card ──────────────────────────────────────────── */}
-        <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
-          <div className="px-6 py-7 space-y-7">
-            {/* ── Member ID — Primary Key ─────────────────────────── */}
+        {/* ── Form card ────────────────────────────────────────── */}
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{
+            background: "oklch(0.99 0.005 170)",
+            borderColor: "oklch(0.88 0.04 170)",
+            boxShadow:
+              "0 1px 3px 0 rgba(0,0,0,0.06), 0 4px 20px 0 oklch(0.52 0.18 170 / 0.06)",
+          }}
+        >
+          <div className="space-y-7 px-6 py-7">
+            {/* ── Member ID hero ─────────────────────────────────── */}
             <div
-              className="rounded-xl border-2 px-4 py-4"
+              className="rounded-xl px-4 py-4 border"
               style={{
                 background:
-                  "linear-gradient(135deg, oklch(0.97 0.04 85) 0%, oklch(0.975 0.03 170) 100%)",
-                borderColor: "oklch(0.52 0.18 170 / 0.35)",
-                boxShadow: "0 0 0 4px oklch(0.52 0.18 170 / 0.05)",
+                  "linear-gradient(135deg, oklch(0.94 0.065 168) 0%, oklch(0.96 0.04 190) 100%)",
+                borderColor: "oklch(0.78 0.1 168)",
               }}
             >
               <div className="flex items-center gap-2 mb-3">
-                <div
-                  className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest text-white"
-                  style={{ background: "oklch(0.52 0.18 170)" }}
+                <span
+                  className="text-[11px] font-bold uppercase tracking-widest"
+                  style={{ color: "oklch(0.38 0.12 170)" }}
                 >
-                  Primary Key
-                </div>
+                  Member ID
+                </span>
                 <span className="text-[11px] text-muted-foreground italic">
                   Auto-fills Group Code &amp; Membership Number
                 </span>
@@ -1151,21 +1176,96 @@ export default function App() {
               </SectionHeading>
               <div className="rounded-xl border border-emerald-100/80 bg-emerald-50/20 px-4 py-4">
                 <FieldGroup>
-                  <Field
-                    label="Amount"
-                    id="amount"
-                    value={form.amount}
-                    onChange={(v) => setField("amount", v)}
-                    placeholder="e.g. 5000"
-                    data-ocid="form.amount.input"
-                  />
+                  {/* Scheme Amount — dropdown */}
+                  <div className="flex flex-col gap-1.5">
+                    <Label
+                      htmlFor="scheme-amount"
+                      className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                    >
+                      Scheme Amount
+                    </Label>
+                    <select
+                      id="scheme-amount"
+                      value={form.schemeAmount || defaultSchemeAmount}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const installment = String(Number(val) * 15);
+                        setForm((prev) => {
+                          const gc =
+                            prev.giftCardAmount || loadDefaultGiftCard();
+                          return {
+                            ...prev,
+                            schemeAmount: val,
+                            installmentAmount: installment,
+                            giftCardAmount: gc,
+                            paidAmount: calcPaidAmount(val, gc),
+                          };
+                        });
+                      }}
+                      className="h-10 text-[14px] rounded-lg border border-border/80 bg-white px-3 hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                      data-ocid="form.scheme_amount.select"
+                    >
+                      {schemeOptions.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Installment Amount — auto calculated: Scheme Amount × 15 */}
+                  <div className="flex flex-col gap-1.5">
+                    <Label
+                      htmlFor="installment-amount"
+                      className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                    >
+                      Installment Amount
+                    </Label>
+                    <input
+                      id="installment-amount"
+                      type="number"
+                      readOnly
+                      value={
+                        form.installmentAmount ||
+                        String(
+                          Number(form.schemeAmount || defaultSchemeAmount) * 15,
+                        )
+                      }
+                      className="h-10 text-[14px] rounded-lg border border-border/80 bg-gray-100 px-3 text-muted-foreground cursor-not-allowed"
+                      data-ocid="form.installment_amount.input"
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      Auto-calculated: Scheme Amount × 15
+                    </span>
+                  </div>
+
+                  {/* Gift Card Amount */}
                   <Field
                     label="Gift Card Amount"
                     id="gift-card-amount"
                     value={form.giftCardAmount}
-                    onChange={(v) => setField("giftCardAmount", v)}
-                    placeholder="e.g. 500"
+                    onChange={(v) => {
+                      setForm((prev) => ({
+                        ...prev,
+                        giftCardAmount: v,
+                        paidAmount: calcPaidAmount(
+                          prev.schemeAmount || "5000",
+                          v,
+                        ),
+                      }));
+                    }}
+                    placeholder="e.g. 11000"
                     data-ocid="form.gift_card_amount.input"
+                  />
+
+                  {/* Paid Amount */}
+                  <Field
+                    label="Paid Amount"
+                    id="paid-amount"
+                    value={form.paidAmount}
+                    onChange={(v) => setField("paidAmount", v)}
+                    placeholder="e.g. 5000"
+                    data-ocid="form.paid_amount.input"
                   />
                 </FieldGroup>
               </div>
@@ -1415,10 +1515,11 @@ export default function App() {
               Settings
             </DialogTitle>
             <DialogDescription className="text-[13px] text-muted-foreground">
-              Configure the Google Apps Script Web App URL for data sync.
+              Configure your Google Apps Script URL and Scheme Amount options.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
+          <div className="space-y-5 py-2">
+            {/* Script URL */}
             <div className="flex flex-col gap-1.5">
               <Label
                 htmlFor="script-url"
@@ -1426,37 +1527,98 @@ export default function App() {
               >
                 Google Apps Script URL
               </Label>
-              {isLoadingUrl ? (
-                <div className="flex items-center gap-2 h-10 px-3 rounded-lg border border-border bg-muted/40">
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  <span className="text-[13px] text-muted-foreground">
-                    Loading...
-                  </span>
+              <Input
+                id="script-url"
+                type="url"
+                value={scriptUrl}
+                onChange={(e) => handleScriptUrlChange(e.target.value)}
+                placeholder="https://script.google.com/macros/s/..."
+                className="h-10 text-[13px] rounded-lg"
+                data-ocid="settings.script_url.input"
+              />
+              {urlWarning && (
+                <div
+                  className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2"
+                  data-ocid="settings.error_state"
+                >
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-[12px] text-amber-700 leading-snug">
+                    {urlWarning}
+                  </p>
                 </div>
-              ) : (
-                <>
-                  <Input
-                    id="script-url"
-                    type="url"
-                    value={scriptUrl}
-                    onChange={(e) => handleScriptUrlChange(e.target.value)}
-                    placeholder="https://script.google.com/macros/s/..."
-                    className="h-10 text-[13px] rounded-lg"
-                    data-ocid="settings.script_url.input"
-                  />
-                  {urlWarning && (
-                    <div
-                      className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2"
-                      data-ocid="settings.error_state"
-                    >
-                      <AlertTriangle className="h-3.5 w-3.5 text-amber-500 mt-0.5 shrink-0" />
-                      <p className="text-[12px] text-amber-700 leading-snug">
-                        {urlWarning}
-                      </p>
-                    </div>
-                  )}
-                </>
               )}
+            </div>
+
+            {/* Scheme Amount Options */}
+            <div className="flex flex-col gap-2">
+              <Label className="text-[12px] font-medium text-muted-foreground">
+                Scheme Amount Options
+              </Label>
+              <p className="text-[11px] text-muted-foreground/60 -mt-1">
+                These 4 values appear in the Scheme Amount dropdown on the form.
+              </p>
+              <div
+                className="grid grid-cols-1 gap-3"
+                style={{ maxWidth: "200px" }}
+              >
+                {([0, 1, 2, 3] as const).map((i) => (
+                  <div key={String(i)} className="flex flex-col gap-1">
+                    <Label
+                      htmlFor={`scheme-opt-${i}`}
+                      className="text-[11px] font-medium text-muted-foreground"
+                    >
+                      Option {i + 1}
+                    </Label>
+                    <Input
+                      id={`scheme-opt-${i}`}
+                      type="number"
+                      value={settingsSchemeOptions[i] ?? ""}
+                      onChange={(e) => {
+                        const updated = [...settingsSchemeOptions];
+                        updated[i] = e.target.value;
+                        setSettingsSchemeOptions(updated);
+                      }}
+                      placeholder={`e.g. ${DEFAULT_SCHEME_OPTIONS[i]}`}
+                      className="h-10 text-[13px] rounded-lg"
+                      data-ocid={`settings.scheme_opt_${i + 1}.input`}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Default Amounts */}
+            <div className="flex flex-col gap-2">
+              <Label className="text-[12px] font-medium text-muted-foreground">
+                Default Amounts (pre-filled on new entry)
+              </Label>
+              <p className="text-[11px] text-muted-foreground/60 -mt-1">
+                This value is pre-filled in Gift Card Amount for each new
+                customer. Paid Amount is auto-calculated from the scheme and
+                gift card.
+              </p>
+              <div
+                className="grid grid-cols-1 gap-3"
+                style={{ maxWidth: "200px" }}
+              >
+                <div className="flex flex-col gap-1">
+                  <Label
+                    htmlFor="default-gift-card"
+                    className="text-[11px] font-medium text-muted-foreground"
+                  >
+                    Gift Card Amount
+                  </Label>
+                  <Input
+                    id="default-gift-card"
+                    type="number"
+                    value={settingsGiftCardDefault}
+                    onChange={(e) => setSettingsGiftCardDefault(e.target.value)}
+                    placeholder="e.g. 11000"
+                    className="h-10 text-[13px] rounded-lg"
+                    data-ocid="settings.default_gift_card.input"
+                  />
+                </div>
+              </div>
             </div>
           </div>
           <DialogFooter className="gap-2">
@@ -1469,8 +1631,7 @@ export default function App() {
               Cancel
             </Button>
             <Button
-              onClick={handleSaveUrl}
-              disabled={isSavingUrl || isLoadingUrl}
+              onClick={handleSaveSettings}
               className="h-9 px-4 text-[13px] rounded-lg text-white"
               style={{
                 background:
@@ -1478,10 +1639,7 @@ export default function App() {
               }}
               data-ocid="settings.save_button"
             >
-              {isSavingUrl && (
-                <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />
-              )}
-              {isSavingUrl ? "Saving..." : "Save URL"}
+              Save Settings
             </Button>
           </DialogFooter>
         </DialogContent>
