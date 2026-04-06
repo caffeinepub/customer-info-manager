@@ -550,9 +550,13 @@ export default function App() {
         "Child 3 DOB": formatDateForSheet(form.children3BirthDate),
         Remarks: form.remark.trim().toUpperCase(),
       };
-      const dataEncoded = encodeURIComponent(JSON.stringify(sheetPayload));
-      const url = `${resolvedUrl}?action=save&data=${dataEncoded}`;
-      const res = await fetch(url);
+      const savePayload = { action: "save", ...sheetPayload };
+      const url = resolvedUrl;
+      const res = await fetch(url, {
+        method: "POST",
+        body: JSON.stringify(savePayload),
+        headers: { "Content-Type": "text/plain" },
+      });
       const text = await res.text();
       let data: Record<string, unknown>;
       try {
