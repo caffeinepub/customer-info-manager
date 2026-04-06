@@ -493,41 +493,53 @@ export default function App() {
         toast.error(`Failed to load: ${parsed.error}`);
         return;
       }
-      // Apps Script returns { success: true, record: { "Member ID": "...", ... } }
+      // Apps Script returns { success: true, record: { "MEMBER_ID": "...", ... } }
       const data = (parsed.record ?? parsed.data ?? {}) as Record<
         string,
         unknown
       >;
       setForm({
-        memberId: (data["Member ID"] ?? "") as string,
-        groupCode: (data["Group Code"] ?? "") as string,
-        membershipNumber: (data["Membership No"] ?? "") as string,
-        dateOfJoining: toDateInput((data["Joining Date"] ?? "") as string),
-        reference: (data.Reference ?? "") as string,
-        fullName: (data["Full Name"] ?? "") as string,
-        fullAddress: (data.Address ?? "") as string,
-        mobileNumber: (data["Mobile 1"] ?? "") as string,
-        altMobileNumber: (data["Mobile 2"] ?? "") as string,
-        dateOfBirth: toDateInput((data.DOB ?? "") as string),
-        anniversaryDate: toDateInput((data.Anniversary ?? "") as string),
-        paidAmount: String(data["Paid Amount"] ?? ""),
-        giftCardAmount: String(data["Gift Card Amount"] ?? ""),
-        schemeAmount: String(data["Scheme Amount"] ?? ""),
-        installmentAmount: (() => {
-          const raw = String(data["Installment Amount"] ?? "");
-          if (raw && raw !== "0") return raw;
-          const scheme = String(data["Scheme Amount"] ?? "");
-          return scheme ? String(Number(scheme) * 15) : "";
+        memberId: (data.MEMBER_ID ?? "") as string,
+        groupCode: (data.MEMBERSHIP_TITLE ?? "") as string,
+        membershipNumber: (data["MEMBERSHIP NO."] ?? "") as string,
+        dateOfJoining: toDateInput((data.START_DATE ?? "") as string),
+        reference: (data.MEMBER_REFERENCE ?? "") as string,
+        fullName: (data.MEMBER_NAME ?? "") as string,
+        fullAddress: (data.MEMBER_ADDRESS ?? "") as string,
+        mobileNumber: (data["MEMBER_PHONE 1"] ?? "") as string,
+        altMobileNumber: (data["MEMBER_PHONE 2"] ?? "") as string,
+        dateOfBirth: toDateInput((data.MEMBER_BIRTH_DATE ?? "") as string),
+        anniversaryDate: toDateInput(
+          (data.MEMBER_ANNIVERSARY_DATE ?? "") as string,
+        ),
+        paidAmount: String(data.PAID_AMOUNT ?? ""),
+        giftCardAmount: String(data.GIFT_CARD_AMOUNT ?? ""),
+        schemeAmount: (() => {
+          // SCHEME_AMOUNT is not stored in sheet; derive from INSTALLMENT_AMOUNT / 15
+          const inst = Number(data.INSTALLMENT_AMOUNT ?? 0);
+          return inst ? String(inst / 15) : "";
         })(),
-        spouseName: (data["Spouse Name"] ?? "") as string,
-        spouseBirthDate: toDateInput((data["Spouse DOB"] ?? "") as string),
-        children1Name: (data["Child 1 Name"] ?? "") as string,
-        children1BirthDate: toDateInput((data["Child 1 DOB"] ?? "") as string),
-        children2Name: (data["Child 2 Name"] ?? "") as string,
-        children2BirthDate: toDateInput((data["Child 2 DOB"] ?? "") as string),
-        children3Name: (data["Child 3 Name"] ?? "") as string,
-        children3BirthDate: toDateInput((data["Child 3 DOB"] ?? "") as string),
-        remark: (data.Remarks ?? "") as string,
+        installmentAmount: (() => {
+          const raw = String(data.INSTALLMENT_AMOUNT ?? "");
+          return raw && raw !== "0" ? raw : "";
+        })(),
+        spouseName: (data.MEMBER_SPOUSE_NAME ?? "") as string,
+        spouseBirthDate: toDateInput(
+          (data.MEMBER_SPOUSE_BIRTH_DATE ?? "") as string,
+        ),
+        children1Name: (data.CHILD_1_NAME ?? "") as string,
+        children1BirthDate: toDateInput(
+          (data.CHILD_1_BIRTH_DATE ?? "") as string,
+        ),
+        children2Name: (data.CHILD_2_NAME ?? "") as string,
+        children2BirthDate: toDateInput(
+          (data.CHILD_2_BIRTH_DATE ?? "") as string,
+        ),
+        children3Name: (data.CHILD_3_NAME ?? "") as string,
+        children3BirthDate: toDateInput(
+          (data.CHILD_3_BIRTH_DATE ?? "") as string,
+        ),
+        remark: (data.GIFT_INFO ?? "") as string,
       });
       toast.success("Customer data loaded successfully.");
     } catch (err) {
@@ -555,32 +567,34 @@ export default function App() {
         );
         return;
       }
-      // Map camelCase form fields to exact Google Sheet column headers
+      // Map camelCase form fields to exact Google Sheet column headers (new names)
       const sheetPayload: Record<string, string | number> = {
-        "Member ID": form.memberId.trim().toUpperCase(),
-        "Group Code": form.groupCode.trim().toUpperCase(),
-        "Membership No": form.membershipNumber.trim().toUpperCase(),
-        "Joining Date": formatDateForSheet(form.dateOfJoining),
-        Reference: form.reference.trim().toUpperCase(),
-        "Full Name": form.fullName.trim().toUpperCase(),
-        Address: form.fullAddress.trim().toUpperCase(),
-        "Mobile 1": form.mobileNumber.trim(),
-        "Mobile 2": form.altMobileNumber.trim(),
-        DOB: formatDateForSheet(form.dateOfBirth),
-        Anniversary: formatDateForSheet(form.anniversaryDate),
-        "Paid Amount": Number.parseFloat(form.paidAmount) || 0,
-        "Gift Card Amount": Number.parseFloat(form.giftCardAmount) || 0,
-        "Scheme Amount": Number.parseFloat(form.schemeAmount) || 0,
-        "Installment Amount": Number.parseFloat(form.installmentAmount) || 0,
-        "Spouse Name": form.spouseName.trim().toUpperCase(),
-        "Spouse DOB": formatDateForSheet(form.spouseBirthDate),
-        "Child 1 Name": form.children1Name.trim().toUpperCase(),
-        "Child 1 DOB": formatDateForSheet(form.children1BirthDate),
-        "Child 2 Name": form.children2Name.trim().toUpperCase(),
-        "Child 2 DOB": formatDateForSheet(form.children2BirthDate),
-        "Child 3 Name": form.children3Name.trim().toUpperCase(),
-        "Child 3 DOB": formatDateForSheet(form.children3BirthDate),
-        Remarks: form.remark.trim().toUpperCase(),
+        MEMBER_ID: form.memberId.trim().toUpperCase(),
+        MEMBERSHIP_TITLE: form.groupCode.trim().toUpperCase(),
+        "MEMBERSHIP NO.": form.membershipNumber.trim().toUpperCase(),
+        START_DATE: formatDateForSheet(form.dateOfJoining),
+        MEMBER_REFERENCE: form.reference.trim().toUpperCase(),
+        MEMBER_NAME: form.fullName.trim().toUpperCase(),
+        MEMBER_ADDRESS: form.fullAddress.trim().toUpperCase(),
+        "MEMBER_PHONE 1": form.mobileNumber.trim(),
+        "MEMBER_PHONE 2": form.altMobileNumber.trim(),
+        MEMBER_BIRTH_DATE: formatDateForSheet(form.dateOfBirth),
+        MEMBER_ANNIVERSARY_DATE: formatDateForSheet(form.anniversaryDate),
+        PAID_AMOUNT: Number.parseFloat(form.paidAmount) || 0,
+        GIFT_CARD_AMOUNT: Number.parseFloat(form.giftCardAmount) || 0,
+        INSTALLMENT_AMOUNT: Number.parseFloat(form.installmentAmount) || 0,
+        TOTAL_AMOUNT:
+          (Number.parseFloat(form.giftCardAmount) || 0) +
+          (Number.parseFloat(form.paidAmount) || 0),
+        MEMBER_SPOUSE_NAME: form.spouseName.trim().toUpperCase(),
+        MEMBER_SPOUSE_BIRTH_DATE: formatDateForSheet(form.spouseBirthDate),
+        CHILD_1_NAME: form.children1Name.trim().toUpperCase(),
+        CHILD_1_BIRTH_DATE: formatDateForSheet(form.children1BirthDate),
+        CHILD_2_NAME: form.children2Name.trim().toUpperCase(),
+        CHILD_2_BIRTH_DATE: formatDateForSheet(form.children2BirthDate),
+        CHILD_3_NAME: form.children3Name.trim().toUpperCase(),
+        CHILD_3_BIRTH_DATE: formatDateForSheet(form.children3BirthDate),
+        GIFT_INFO: form.remark.trim().toUpperCase(),
       };
       const savePayload = { action: "save", ...sheetPayload };
       const url = resolvedUrl;
