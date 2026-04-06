@@ -275,6 +275,7 @@ type AppMode = "new" | "update" | "payment";
 
 interface PaymentRow {
   member: string;
+  membership: string;
   date: string;
   amount: string;
   method: string;
@@ -686,7 +687,7 @@ export default function App() {
     setIsFetchingPayments(true);
     setPaymentRows([]);
     try {
-      const url = `${resolvedUrl}?action=fetchPayments&phone=${encodeURIComponent(paymentLookupMobile.trim())}`;
+      const url = `${resolvedUrl}?action=fetchPayments&phone=${encodeURIComponent(paymentLookupMobile.trim())}&memberId=${encodeURIComponent(memberId.trim())}`;
       const res = await fetch(url);
       const text = await res.text();
       let parsed: { success: boolean; payments?: PaymentRow[]; error?: string };
@@ -1783,7 +1784,7 @@ export default function App() {
                                 className="text-[11px] font-bold uppercase tracking-wide"
                                 style={{ color: "oklch(0.38 0.12 170)" }}
                               >
-                                Name
+                                Membership
                               </TableHead>
                               <TableHead
                                 className="text-[11px] font-bold uppercase tracking-wide"
@@ -1818,42 +1819,94 @@ export default function App() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {paymentRows.map((row, i) => (
-                              <TableRow
-                                key={`${row.date}-${row.amount}-${i}`}
-                                className="hover:bg-teal-50/30 transition-colors"
-                                data-ocid={`payment.history.row.${i + 1}`}
-                              >
-                                <TableCell className="text-[13px] font-medium text-foreground py-3">
-                                  {row.member || "—"}
-                                </TableCell>
-                                <TableCell className="text-[13px] text-muted-foreground py-3 whitespace-nowrap">
-                                  {row.date || "—"}
-                                </TableCell>
-                                <TableCell
-                                  className="text-[13px] font-semibold text-right py-3"
-                                  style={{ color: "oklch(0.38 0.16 170)" }}
-                                >
-                                  {row.amount
-                                    ? `₹${Number(row.amount).toLocaleString("en-IN")}`
-                                    : "—"}
-                                </TableCell>
-                                <TableCell className="text-[13px] text-muted-foreground py-3">
-                                  {row.method || "—"}
-                                </TableCell>
-                                <TableCell className="text-[13px] text-muted-foreground py-3">
-                                  {row.reference || "—"}
-                                </TableCell>
-                                <TableCell className="text-[13px] text-muted-foreground py-3">
-                                  {row.recordedBy || "—"}
-                                </TableCell>
-                              </TableRow>
-                            ))}
+                            {(() => {
+                              // Group rows by membership
+                              const groups: {
+                                label: string;
+                                rows: typeof paymentRows;
+                              }[] = [];
+                              for (const row of paymentRows) {
+                                const label =
+                                  row.membership || row.member || "—";
+                                const existing = groups.find(
+                                  (g) => g.label === label,
+                                );
+                                if (existing) existing.rows.push(row);
+                                else groups.push({ label, rows: [row] });
+                              }
+                              return groups.map((group, gi) => (
+                                <>
+                                  {group.rows.map((row, i) => (
+                                    <TableRow
+                                      key={`${gi}-${row.date}-${row.amount}-${i}`}
+                                      className="hover:bg-teal-50/30 transition-colors"
+                                      data-ocid={`payment.history.row.${gi}.${i + 1}`}
+                                    >
+                                      <TableCell className="text-[13px] font-medium text-foreground py-3">
+                                        {row.membership || row.member || "—"}
+                                      </TableCell>
+                                      <TableCell className="text-[13px] text-muted-foreground py-3 whitespace-nowrap">
+                                        {row.date || "—"}
+                                      </TableCell>
+                                      <TableCell
+                                        className="text-[13px] font-semibold text-right py-3"
+                                        style={{
+                                          color: "oklch(0.38 0.16 170)",
+                                        }}
+                                      >
+                                        {row.amount
+                                          ? `₹${Number(row.amount).toLocaleString("en-IN")}`
+                                          : "—"}
+                                      </TableCell>
+                                      <TableCell className="text-[13px] text-muted-foreground py-3">
+                                        {row.method || "—"}
+                                      </TableCell>
+                                      <TableCell className="text-[13px] text-muted-foreground py-3">
+                                        {row.reference || "—"}
+                                      </TableCell>
+                                      <TableCell className="text-[13px] text-muted-foreground py-3">
+                                        {row.recordedBy || "—"}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                  {/* Membership subtotal row */}
+                                  <TableRow
+                                    key={`subtotal-${group.label}`}
+                                    style={{
+                                      background: "oklch(0.93 0.055 168 / 0.5)",
+                                    }}
+                                  >
+                                    <TableCell
+                                      colSpan={2}
+                                      className="text-[12px] font-bold py-2 pl-3"
+                                      style={{ color: "oklch(0.38 0.12 170)" }}
+                                    >
+                                      {group.label} — {group.rows.length}{" "}
+                                      payment
+                                      {group.rows.length !== 1 ? "s" : ""}
+                                    </TableCell>
+                                    <TableCell
+                                      className="text-[13px] font-bold text-right py-2"
+                                      style={{ color: "oklch(0.30 0.18 170)" }}
+                                    >
+                                      ₹
+                                      {group.rows
+                                        .reduce(
+                                          (s, r) => s + (Number(r.amount) || 0),
+                                          0,
+                                        )
+                                        .toLocaleString("en-IN")}
+                                    </TableCell>
+                                    <TableCell colSpan={3} />
+                                  </TableRow>
+                                </>
+                              ));
+                            })()}
                           </TableBody>
                         </Table>
                       </div>
 
-                      {/* Summary row */}
+                      {/* Grand total row */}
                       <div
                         className="flex items-center justify-between mt-4 px-4 py-3 rounded-xl border"
                         style={{
@@ -1873,7 +1926,7 @@ export default function App() {
                           className="text-[14px] font-bold"
                           style={{ color: "oklch(0.32 0.18 170)" }}
                         >
-                          Total: ₹
+                          Grand Total: ₹
                           {paymentRows
                             .reduce(
                               (sum, r) => sum + (Number(r.amount) || 0),
