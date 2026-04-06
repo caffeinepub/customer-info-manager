@@ -10,6 +10,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Toaster } from "@/components/ui/sonner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
   AlertTriangle,
@@ -17,10 +25,12 @@ import {
   Calendar,
   CheckCircle2,
   ClipboardList,
+  CreditCard,
   Loader2,
   MessageSquare,
   Phone,
   PlusCircle,
+  ReceiptText,
   RefreshCw,
   Save,
   Search,
@@ -259,7 +269,16 @@ function toDateInput(value: string): string {
   return "";
 }
 
-type AppMode = "new" | "update";
+type AppMode = "new" | "update" | "payment";
+
+interface PaymentRow {
+  member: string;
+  date: string;
+  amount: string;
+  method: string;
+  reference: string;
+  recordedBy: string;
+}
 
 export default function App() {
   // Mode switcher
@@ -277,6 +296,19 @@ export default function App() {
   const [isSelectingAccount, setIsSelectingAccount] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Payment History state
+  const [paymentLookupMobile, setPaymentLookupMobile] = useState("");
+  const [paymentAccounts, setPaymentAccounts] = useState<
+    Array<{ memberId: string; index: number }>
+  >([]);
+  const [selectedPaymentMemberId, setSelectedPaymentMemberId] = useState<
+    string | null
+  >(null);
+  const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([]);
+  const [isFetchingPaymentAccounts, setIsFetchingPaymentAccounts] =
+    useState(false);
+  const [isFetchingPayments, setIsFetchingPayments] = useState(false);
 
   // Form state — flat CustomerRecord
   const [form, setForm] = useState<CustomerRecord>(() => ({
@@ -582,6 +614,77 @@ export default function App() {
     }
   };
 
+  // Payment History — fetch accounts by mobile
+  const handleFetchPaymentAccounts = async () => {
+    const resolvedUrl = await getScriptUrl();
+    if (!resolvedUrl.trim()) {
+      toast.error("Apps Script URL not configured. Please set it in Settings.");
+      return;
+    }
+    if (!paymentLookupMobile.trim()) {
+      toast.error("Please enter a mobile number.");
+      return;
+    }
+    setIsFetchingPaymentAccounts(true);
+    setPaymentAccounts([]);
+    setSelectedPaymentMemberId(null);
+    setPaymentRows([]);
+    try {
+      const url = `${resolvedUrl}?action=fetchAll&mobile=${encodeURIComponent(paymentLookupMobile.trim())}`;
+      const res = await fetch(url);
+      const text = await res.text();
+      let parsed: { success: boolean; memberIds?: string[]; error?: string };
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error(
+          "Invalid response from server. Check your Apps Script URL.",
+        );
+      }
+      if (!parsed.success) throw new Error(parsed.error || "Fetch failed.");
+      const ids = parsed.memberIds || [];
+      setPaymentAccounts(ids.map((id, i) => ({ memberId: id, index: i })));
+      if (ids.length === 0) {
+        toast("No accounts found for this mobile number.");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Fetch failed.");
+    } finally {
+      setIsFetchingPaymentAccounts(false);
+    }
+  };
+
+  // Payment History — fetch payments for a selected Member ID
+  const handleFetchPayments = async (memberId: string) => {
+    const resolvedUrl = await getScriptUrl();
+    if (!resolvedUrl.trim()) {
+      toast.error("Apps Script URL not configured. Please set it in Settings.");
+      return;
+    }
+    setSelectedPaymentMemberId(memberId);
+    setIsFetchingPayments(true);
+    setPaymentRows([]);
+    try {
+      const url = `${resolvedUrl}?action=fetchPayments&memberId=${encodeURIComponent(memberId)}`;
+      const res = await fetch(url);
+      const text = await res.text();
+      let parsed: { success: boolean; payments?: PaymentRow[]; error?: string };
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error("Invalid response from server.");
+      }
+      if (!parsed.success) throw new Error(parsed.error || "Fetch failed.");
+      setPaymentRows(parsed.payments || []);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to load payments.",
+      );
+    } finally {
+      setIsFetchingPayments(false);
+    }
+  };
+
   // Mode switch — resets form and lookup state
   const handleModeSwitch = (newMode: AppMode) => {
     setMode(newMode);
@@ -597,6 +700,11 @@ export default function App() {
     setLookupMobile("");
     setLookupAccounts([]);
     setSelectedIndex(null);
+    // Reset payment state on mode switch
+    setPaymentLookupMobile("");
+    setPaymentAccounts([]);
+    setSelectedPaymentMemberId(null);
+    setPaymentRows([]);
   };
 
   // Clear form
@@ -763,6 +871,19 @@ export default function App() {
             <Search className="h-4 w-4" />
             Update Existing
           </button>
+          <button
+            type="button"
+            onClick={() => handleModeSwitch("payment")}
+            className={`flex-1 flex items-center justify-center gap-2 h-10 rounded-lg text-[13px] font-semibold transition-all ${
+              mode === "payment"
+                ? "bg-white shadow-sm text-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            data-ocid="mode.payment.tab"
+          >
+            <CreditCard className="h-4 w-4" />
+            Payment History
+          </button>
         </div>
 
         {/* ── Lookup block — only in Update mode ───────────────── */}
@@ -885,554 +1006,868 @@ export default function App() {
         )}
 
         {/* ── Form card ────────────────────────────────────────── */}
-        <div
-          className="rounded-2xl border overflow-hidden"
-          style={{
-            background: "oklch(0.99 0.005 170)",
-            borderColor: "oklch(0.88 0.04 170)",
-            boxShadow:
-              "0 1px 3px 0 rgba(0,0,0,0.06), 0 4px 20px 0 oklch(0.52 0.18 170 / 0.06)",
-          }}
-        >
-          <div className="space-y-7 px-6 py-7">
-            {/* ── Member ID hero ─────────────────────────────────── */}
-            <div
-              className="rounded-xl px-4 py-4 border"
-              style={{
-                background:
-                  "linear-gradient(135deg, oklch(0.94 0.065 168) 0%, oklch(0.96 0.04 190) 100%)",
-                borderColor: "oklch(0.78 0.1 168)",
-              }}
-            >
-              <div className="flex items-center gap-2 mb-3">
-                <span
-                  className="text-[11px] font-bold uppercase tracking-widest"
-                  style={{ color: "oklch(0.38 0.12 170)" }}
-                >
-                  Member ID
-                </span>
-                <span className="text-[11px] text-muted-foreground italic">
-                  Auto-fills Group Code &amp; Membership Number
-                </span>
-              </div>
-              <div className="flex flex-col gap-1.5 max-w-xs">
-                <Label
-                  htmlFor="member-id"
-                  className="text-[11px] font-bold uppercase tracking-wide"
-                  style={{ color: "oklch(0.38 0.12 170)" }}
-                >
-                  Member ID
-                </Label>
-                <Input
-                  id="member-id"
-                  type="text"
-                  value={form.memberId}
-                  onChange={(e) => handleMemberIdChange(e.target.value)}
-                  placeholder="e.g. 025/01"
-                  className="h-10 text-[15px] font-semibold rounded-lg bg-white"
-                  style={{ borderColor: "oklch(0.52 0.18 170 / 0.4)" }}
-                  data-ocid="form.member_id.input"
-                />
-              </div>
-            </div>
-
-            {/* ── Account Details ─────────────────────────────────── */}
-            <section>
-              <SectionHeading
-                icon={<Building2 size={14} />}
-                color="teal"
-                bgClass="bg-teal-50"
-                borderClass="border-teal-200"
-                textClass="text-teal-700"
+        {mode !== "payment" && (
+          <div
+            className="rounded-2xl border overflow-hidden"
+            style={{
+              background: "oklch(0.99 0.005 170)",
+              borderColor: "oklch(0.88 0.04 170)",
+              boxShadow:
+                "0 1px 3px 0 rgba(0,0,0,0.06), 0 4px 20px 0 oklch(0.52 0.18 170 / 0.06)",
+            }}
+          >
+            <div className="space-y-7 px-6 py-7">
+              {/* ── Member ID hero ─────────────────────────────────── */}
+              <div
+                className="rounded-xl px-4 py-4 border"
+                style={{
+                  background:
+                    "linear-gradient(135deg, oklch(0.94 0.065 168) 0%, oklch(0.96 0.04 190) 100%)",
+                  borderColor: "oklch(0.78 0.1 168)",
+                }}
               >
-                Account Details
-              </SectionHeading>
-              <div className="rounded-xl border border-teal-100/80 bg-teal-50/20 px-4 py-4">
-                <FieldGroup>
-                  <Field
-                    label="Group Code"
-                    id="group-code"
-                    value={form.groupCode}
-                    onChange={(v) => setField("groupCode", v)}
-                    placeholder="e.g. FDC - 25"
-                    data-ocid="form.group_code.input"
-                  />
-                  <Field
-                    label="Membership Number"
-                    id="membership-number"
-                    value={form.membershipNumber}
-                    onChange={(v) => setField("membershipNumber", v)}
-                    placeholder="e.g. 025/01"
-                    data-ocid="form.membership_number.input"
-                  />
-                  <Field
-                    label="Date of Joining"
-                    id="date-of-joining"
-                    type="date"
-                    value={form.dateOfJoining}
-                    onChange={(v) => setField("dateOfJoining", v)}
-                    data-ocid="form.date_of_joining.input"
-                  />
-                  <Field
-                    label="Reference"
-                    id="reference"
-                    value={form.reference}
-                    onChange={(v) => setField("reference", v)}
-                    placeholder="Referred by"
-                    data-ocid="form.reference.input"
-                  />
-                </FieldGroup>
-              </div>
-            </section>
-
-            {/* ── Personal Information ───────────────────────────── */}
-            <section>
-              <SectionHeading
-                icon={<User size={14} />}
-                color="teal"
-                bgClass="bg-teal-50"
-                borderClass="border-teal-200"
-                textClass="text-teal-700"
-              >
-                Personal Information
-              </SectionHeading>
-              <div className="rounded-xl border border-teal-100/80 bg-teal-50/20 px-4 py-4 space-y-4">
-                <div className="flex flex-col gap-1.5">
-                  <Label
-                    htmlFor="full-name"
-                    className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                <div className="flex items-center gap-2 mb-3">
+                  <span
+                    className="text-[11px] font-bold uppercase tracking-widest"
+                    style={{ color: "oklch(0.38 0.12 170)" }}
                   >
-                    Full Name
+                    Member ID
+                  </span>
+                  <span className="text-[11px] text-muted-foreground italic">
+                    Auto-fills Group Code &amp; Membership Number
+                  </span>
+                </div>
+                <div className="flex flex-col gap-1.5 max-w-xs">
+                  <Label
+                    htmlFor="member-id"
+                    className="text-[11px] font-bold uppercase tracking-wide"
+                    style={{ color: "oklch(0.38 0.12 170)" }}
+                  >
+                    Member ID
                   </Label>
                   <Input
-                    id="full-name"
+                    id="member-id"
                     type="text"
-                    value={form.fullName}
-                    onChange={(e) =>
-                      setField("fullName", e.target.value.toUpperCase())
-                    }
-                    placeholder="Customer's full name"
-                    style={{ textTransform: "uppercase" }}
-                    className="h-10 text-[14px] rounded-lg bg-white border-border/80 hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary transition-colors"
-                    data-ocid="form.full_name.input"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label
-                    htmlFor="full-address"
-                    className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-                  >
-                    Full Address
-                  </Label>
-                  <Textarea
-                    id="full-address"
-                    value={form.fullAddress}
-                    onChange={(e) =>
-                      setField("fullAddress", e.target.value.toUpperCase())
-                    }
-                    placeholder="Street, City, State, Pincode"
-                    rows={3}
-                    style={{ textTransform: "uppercase" }}
-                    className="text-[14px] rounded-lg bg-white border-border/80 resize-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary transition-colors"
-                    data-ocid="form.full_address.textarea"
+                    value={form.memberId}
+                    onChange={(e) => handleMemberIdChange(e.target.value)}
+                    placeholder="e.g. 025/01"
+                    className="h-10 text-[15px] font-semibold rounded-lg bg-white"
+                    style={{ borderColor: "oklch(0.52 0.18 170 / 0.4)" }}
+                    data-ocid="form.member_id.input"
                   />
                 </div>
               </div>
-            </section>
 
-            {/* ── Contact ───────────────────────────────────────── */}
-            <section>
-              <SectionHeading
-                icon={<Phone size={14} />}
-                color="cyan"
-                bgClass="bg-cyan-50"
-                borderClass="border-cyan-200"
-                textClass="text-cyan-700"
-              >
-                Contact
-              </SectionHeading>
-              <div className="rounded-xl border border-cyan-100/80 bg-cyan-50/20 px-4 py-4">
-                <FieldGroup>
-                  <Field
-                    label="Mobile Number"
-                    id="mobile-number"
-                    type="tel"
-                    value={form.mobileNumber}
-                    onChange={(v) => setField("mobileNumber", v)}
-                    placeholder="Primary mobile"
-                    data-ocid="form.mobile_number.input"
-                  />
-                  <Field
-                    label="Alt Mobile Number"
-                    id="alt-mobile-number"
-                    type="tel"
-                    value={form.altMobileNumber}
-                    onChange={(v) => setField("altMobileNumber", v)}
-                    placeholder="Alternate mobile"
-                    data-ocid="form.alt_mobile_number.input"
-                  />
-                </FieldGroup>
-              </div>
-            </section>
+              {/* ── Account Details ─────────────────────────────────── */}
+              <section>
+                <SectionHeading
+                  icon={<Building2 size={14} />}
+                  color="teal"
+                  bgClass="bg-teal-50"
+                  borderClass="border-teal-200"
+                  textClass="text-teal-700"
+                >
+                  Account Details
+                </SectionHeading>
+                <div className="rounded-xl border border-teal-100/80 bg-teal-50/20 px-4 py-4">
+                  <FieldGroup>
+                    <Field
+                      label="Group Code"
+                      id="group-code"
+                      value={form.groupCode}
+                      onChange={(v) => setField("groupCode", v)}
+                      placeholder="e.g. FDC - 25"
+                      data-ocid="form.group_code.input"
+                    />
+                    <Field
+                      label="Membership Number"
+                      id="membership-number"
+                      value={form.membershipNumber}
+                      onChange={(v) => setField("membershipNumber", v)}
+                      placeholder="e.g. 025/01"
+                      data-ocid="form.membership_number.input"
+                    />
+                    <Field
+                      label="Date of Joining"
+                      id="date-of-joining"
+                      type="date"
+                      value={form.dateOfJoining}
+                      onChange={(v) => setField("dateOfJoining", v)}
+                      data-ocid="form.date_of_joining.input"
+                    />
+                    <Field
+                      label="Reference"
+                      id="reference"
+                      value={form.reference}
+                      onChange={(v) => setField("reference", v)}
+                      placeholder="Referred by"
+                      data-ocid="form.reference.input"
+                    />
+                  </FieldGroup>
+                </div>
+              </section>
 
-            {/* ── Key Dates ────────────────────────────────────── */}
-            <section>
-              <SectionHeading
-                icon={<Calendar size={14} />}
-                color="amber"
-                bgClass="bg-amber-50"
-                borderClass="border-amber-200"
-                textClass="text-amber-700"
-              >
-                Key Dates
-              </SectionHeading>
-              <div className="rounded-xl border border-amber-100/80 bg-amber-50/20 px-4 py-4">
-                <FieldGroup>
-                  <Field
-                    label="Date of Birth"
-                    id="date-of-birth"
-                    type="date"
-                    value={form.dateOfBirth}
-                    onChange={(v) => setField("dateOfBirth", v)}
-                    data-ocid="form.date_of_birth.input"
-                  />
-                  <Field
-                    label="Anniversary Date"
-                    id="anniversary-date"
-                    type="date"
-                    value={form.anniversaryDate}
-                    onChange={(v) => setField("anniversaryDate", v)}
-                    data-ocid="form.anniversary_date.input"
-                  />
-                </FieldGroup>
-              </div>
-            </section>
-
-            {/* ── Financials ────────────────────────────────────── */}
-            <section>
-              <SectionHeading
-                icon={<Wallet size={14} />}
-                color="emerald"
-                bgClass="bg-emerald-50"
-                borderClass="border-emerald-200"
-                textClass="text-emerald-700"
-              >
-                Financials
-              </SectionHeading>
-              <div className="rounded-xl border border-emerald-100/80 bg-emerald-50/20 px-4 py-4">
-                <FieldGroup>
-                  {/* Scheme Amount — dropdown */}
+              {/* ── Personal Information ───────────────────────────── */}
+              <section>
+                <SectionHeading
+                  icon={<User size={14} />}
+                  color="teal"
+                  bgClass="bg-teal-50"
+                  borderClass="border-teal-200"
+                  textClass="text-teal-700"
+                >
+                  Personal Information
+                </SectionHeading>
+                <div className="rounded-xl border border-teal-100/80 bg-teal-50/20 px-4 py-4 space-y-4">
                   <div className="flex flex-col gap-1.5">
                     <Label
-                      htmlFor="scheme-amount"
+                      htmlFor="full-name"
                       className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
                     >
-                      Scheme Amount
+                      Full Name
                     </Label>
-                    <select
-                      id="scheme-amount"
-                      value={form.schemeAmount || defaultSchemeAmount}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        const installment = String(Number(val) * 15);
-                        setForm((prev) => {
-                          const gc = prev.giftCardAmount || "11000";
-                          return {
-                            ...prev,
-                            schemeAmount: val,
-                            installmentAmount: installment,
-                            giftCardAmount: gc,
-                            paidAmount: calcPaidAmount(val, gc),
-                          };
-                        });
-                      }}
-                      className="h-10 text-[14px] rounded-lg border border-border/80 bg-white px-3 hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
-                      data-ocid="form.scheme_amount.select"
-                    >
-                      {schemeOptions.map((opt) => (
-                        <option key={opt} value={opt}>
-                          {opt}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Installment Amount — auto calculated: Scheme Amount × 15 */}
-                  <div className="flex flex-col gap-1.5">
-                    <Label
-                      htmlFor="installment-amount"
-                      className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-                    >
-                      Installment Amount
-                    </Label>
-                    <input
-                      id="installment-amount"
-                      type="number"
-                      readOnly
-                      value={
-                        form.installmentAmount ||
-                        String(
-                          Number(form.schemeAmount || defaultSchemeAmount) * 15,
-                        )
+                    <Input
+                      id="full-name"
+                      type="text"
+                      value={form.fullName}
+                      onChange={(e) =>
+                        setField("fullName", e.target.value.toUpperCase())
                       }
-                      className="h-10 text-[14px] rounded-lg border border-border/80 bg-gray-100 px-3 text-muted-foreground cursor-not-allowed"
-                      data-ocid="form.installment_amount.input"
+                      placeholder="Customer's full name"
+                      style={{ textTransform: "uppercase" }}
+                      className="h-10 text-[14px] rounded-lg bg-white border-border/80 hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary transition-colors"
+                      data-ocid="form.full_name.input"
                     />
-                    <span className="text-[10px] text-muted-foreground">
-                      Auto-calculated: Scheme Amount × 15
-                    </span>
                   </div>
-
-                  {/* Gift Card Amount */}
-                  <Field
-                    label="Gift Card Amount"
-                    id="gift-card-amount"
-                    value={form.giftCardAmount}
-                    onChange={(v) => {
-                      setForm((prev) => ({
-                        ...prev,
-                        giftCardAmount: v,
-                        paidAmount: calcPaidAmount(
-                          prev.schemeAmount || "5000",
-                          v,
-                        ),
-                      }));
-                    }}
-                    placeholder="e.g. 11000"
-                    data-ocid="form.gift_card_amount.input"
-                  />
-
-                  {/* Paid Amount */}
-                  <Field
-                    label="Paid Amount"
-                    id="paid-amount"
-                    value={form.paidAmount}
-                    onChange={(v) => setField("paidAmount", v)}
-                    placeholder="e.g. 5000"
-                    data-ocid="form.paid_amount.input"
-                  />
-                </FieldGroup>
-              </div>
-            </section>
-
-            {/* ── Family Details ────────────────────────────────── */}
-            <section>
-              <SectionHeading
-                icon={<Users size={14} />}
-                color="purple"
-                bgClass="bg-purple-50"
-                borderClass="border-purple-200"
-                textClass="text-purple-700"
-              >
-                Family Details
-              </SectionHeading>
-              <div className="space-y-3">
-                <FamilyCard
-                  label="Spouse"
-                  color="bg-pink-100 text-pink-700 border border-pink-200"
-                >
-                  <FieldGroup>
-                    <Field
-                      label="Spouse Name"
-                      id="spouse-name"
-                      value={form.spouseName}
-                      onChange={(v) => setField("spouseName", v)}
-                      placeholder="Spouse's full name"
-                      data-ocid="form.spouse_name.input"
+                  <div className="flex flex-col gap-1.5">
+                    <Label
+                      htmlFor="full-address"
+                      className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                    >
+                      Full Address
+                    </Label>
+                    <Textarea
+                      id="full-address"
+                      value={form.fullAddress}
+                      onChange={(e) =>
+                        setField("fullAddress", e.target.value.toUpperCase())
+                      }
+                      placeholder="Street, City, State, Pincode"
+                      rows={3}
+                      style={{ textTransform: "uppercase" }}
+                      className="text-[14px] rounded-lg bg-white border-border/80 resize-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary transition-colors"
+                      data-ocid="form.full_address.textarea"
                     />
-                    <Field
-                      label="Spouse Birth Date"
-                      id="spouse-birth-date"
-                      type="date"
-                      value={form.spouseBirthDate}
-                      onChange={(v) => setField("spouseBirthDate", v)}
-                      data-ocid="form.spouse_birth_date.input"
-                    />
-                  </FieldGroup>
-                </FamilyCard>
-
-                <FamilyCard
-                  label="Child 1"
-                  color="bg-indigo-100 text-indigo-700 border border-indigo-200"
-                >
-                  <FieldGroup>
-                    <Field
-                      label="Children 1 Name"
-                      id="children1-name"
-                      value={form.children1Name}
-                      onChange={(v) => setField("children1Name", v)}
-                      placeholder="Child 1 name"
-                      data-ocid="form.children1_name.input"
-                    />
-                    <Field
-                      label="Children 1 Birth Date"
-                      id="children1-birth-date"
-                      type="date"
-                      value={form.children1BirthDate}
-                      onChange={(v) => setField("children1BirthDate", v)}
-                      data-ocid="form.children1_birth_date.input"
-                    />
-                  </FieldGroup>
-                </FamilyCard>
-
-                <FamilyCard
-                  label="Child 2"
-                  color="bg-violet-100 text-violet-700 border border-violet-200"
-                >
-                  <FieldGroup>
-                    <Field
-                      label="Children 2 Name"
-                      id="children2-name"
-                      value={form.children2Name}
-                      onChange={(v) => setField("children2Name", v)}
-                      placeholder="Child 2 name"
-                      data-ocid="form.children2_name.input"
-                    />
-                    <Field
-                      label="Children 2 Birth Date"
-                      id="children2-birth-date"
-                      type="date"
-                      value={form.children2BirthDate}
-                      onChange={(v) => setField("children2BirthDate", v)}
-                      data-ocid="form.children2_birth_date.input"
-                    />
-                  </FieldGroup>
-                </FamilyCard>
-
-                <FamilyCard
-                  label="Child 3"
-                  color="bg-sky-100 text-sky-700 border border-sky-200"
-                >
-                  <FieldGroup>
-                    <Field
-                      label="Children 3 Name"
-                      id="children3-name"
-                      value={form.children3Name}
-                      onChange={(v) => setField("children3Name", v)}
-                      placeholder="Child 3 name"
-                      data-ocid="form.children3_name.input"
-                    />
-                    <Field
-                      label="Children 3 Birth Date"
-                      id="children3-birth-date"
-                      type="date"
-                      value={form.children3BirthDate}
-                      onChange={(v) => setField("children3BirthDate", v)}
-                      data-ocid="form.children3_birth_date.input"
-                    />
-                  </FieldGroup>
-                </FamilyCard>
-              </div>
-            </section>
-
-            {/* ── Remarks ──────────────────────────────────────── */}
-            <section>
-              <SectionHeading
-                icon={<MessageSquare size={14} />}
-                color="orange"
-                bgClass="bg-orange-50"
-                borderClass="border-orange-200"
-                textClass="text-orange-700"
-              >
-                Remarks
-              </SectionHeading>
-              <div className="rounded-xl border border-orange-100/80 bg-orange-50/20 px-4 py-4">
-                <div className="flex flex-col gap-1.5">
-                  <Label
-                    htmlFor="remark"
-                    className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-                  >
-                    Remark
-                  </Label>
-                  <Textarea
-                    id="remark"
-                    value={form.remark}
-                    onChange={(e) =>
-                      setField("remark", e.target.value.toUpperCase())
-                    }
-                    placeholder="Any additional notes or remarks"
-                    rows={3}
-                    style={{ textTransform: "uppercase" }}
-                    className="text-[14px] rounded-lg bg-white border-border/80 resize-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary transition-colors"
-                    data-ocid="form.remark.textarea"
-                  />
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
 
-            {/* ── Action row ───────────────────────────────────── */}
-            <div className="pt-2">
-              <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent mb-5" />
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <p className="text-[12px] text-muted-foreground/70">
-                  {mode === "new" ? (
-                    form.memberId ? (
+              {/* ── Contact ───────────────────────────────────────── */}
+              <section>
+                <SectionHeading
+                  icon={<Phone size={14} />}
+                  color="cyan"
+                  bgClass="bg-cyan-50"
+                  borderClass="border-cyan-200"
+                  textClass="text-cyan-700"
+                >
+                  Contact
+                </SectionHeading>
+                <div className="rounded-xl border border-cyan-100/80 bg-cyan-50/20 px-4 py-4">
+                  <FieldGroup>
+                    <Field
+                      label="Mobile Number"
+                      id="mobile-number"
+                      type="tel"
+                      value={form.mobileNumber}
+                      onChange={(v) => setField("mobileNumber", v)}
+                      placeholder="Primary mobile"
+                      data-ocid="form.mobile_number.input"
+                    />
+                    <Field
+                      label="Alt Mobile Number"
+                      id="alt-mobile-number"
+                      type="tel"
+                      value={form.altMobileNumber}
+                      onChange={(v) => setField("altMobileNumber", v)}
+                      placeholder="Alternate mobile"
+                      data-ocid="form.alt_mobile_number.input"
+                    />
+                  </FieldGroup>
+                </div>
+              </section>
+
+              {/* ── Key Dates ────────────────────────────────────── */}
+              <section>
+                <SectionHeading
+                  icon={<Calendar size={14} />}
+                  color="amber"
+                  bgClass="bg-amber-50"
+                  borderClass="border-amber-200"
+                  textClass="text-amber-700"
+                >
+                  Key Dates
+                </SectionHeading>
+                <div className="rounded-xl border border-amber-100/80 bg-amber-50/20 px-4 py-4">
+                  <FieldGroup>
+                    <Field
+                      label="Date of Birth"
+                      id="date-of-birth"
+                      type="date"
+                      value={form.dateOfBirth}
+                      onChange={(v) => setField("dateOfBirth", v)}
+                      data-ocid="form.date_of_birth.input"
+                    />
+                    <Field
+                      label="Anniversary Date"
+                      id="anniversary-date"
+                      type="date"
+                      value={form.anniversaryDate}
+                      onChange={(v) => setField("anniversaryDate", v)}
+                      data-ocid="form.anniversary_date.input"
+                    />
+                  </FieldGroup>
+                </div>
+              </section>
+
+              {/* ── Financials ────────────────────────────────────── */}
+              <section>
+                <SectionHeading
+                  icon={<Wallet size={14} />}
+                  color="emerald"
+                  bgClass="bg-emerald-50"
+                  borderClass="border-emerald-200"
+                  textClass="text-emerald-700"
+                >
+                  Financials
+                </SectionHeading>
+                <div className="rounded-xl border border-emerald-100/80 bg-emerald-50/20 px-4 py-4">
+                  <FieldGroup>
+                    {/* Scheme Amount — dropdown */}
+                    <div className="flex flex-col gap-1.5">
+                      <Label
+                        htmlFor="scheme-amount"
+                        className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                      >
+                        Scheme Amount
+                      </Label>
+                      <select
+                        id="scheme-amount"
+                        value={form.schemeAmount || defaultSchemeAmount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const installment = String(Number(val) * 15);
+                          setForm((prev) => {
+                            const gc = prev.giftCardAmount || "11000";
+                            return {
+                              ...prev,
+                              schemeAmount: val,
+                              installmentAmount: installment,
+                              giftCardAmount: gc,
+                              paidAmount: calcPaidAmount(val, gc),
+                            };
+                          });
+                        }}
+                        className="h-10 text-[14px] rounded-lg border border-border/80 bg-white px-3 hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                        data-ocid="form.scheme_amount.select"
+                      >
+                        {schemeOptions.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Installment Amount — auto calculated: Scheme Amount × 15 */}
+                    <div className="flex flex-col gap-1.5">
+                      <Label
+                        htmlFor="installment-amount"
+                        className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                      >
+                        Installment Amount
+                      </Label>
+                      <input
+                        id="installment-amount"
+                        type="number"
+                        readOnly
+                        value={
+                          form.installmentAmount ||
+                          String(
+                            Number(form.schemeAmount || defaultSchemeAmount) *
+                              15,
+                          )
+                        }
+                        className="h-10 text-[14px] rounded-lg border border-border/80 bg-gray-100 px-3 text-muted-foreground cursor-not-allowed"
+                        data-ocid="form.installment_amount.input"
+                      />
+                      <span className="text-[10px] text-muted-foreground">
+                        Auto-calculated: Scheme Amount × 15
+                      </span>
+                    </div>
+
+                    {/* Gift Card Amount */}
+                    <Field
+                      label="Gift Card Amount"
+                      id="gift-card-amount"
+                      value={form.giftCardAmount}
+                      onChange={(v) => {
+                        setForm((prev) => ({
+                          ...prev,
+                          giftCardAmount: v,
+                          paidAmount: calcPaidAmount(
+                            prev.schemeAmount || "5000",
+                            v,
+                          ),
+                        }));
+                      }}
+                      placeholder="e.g. 11000"
+                      data-ocid="form.gift_card_amount.input"
+                    />
+
+                    {/* Paid Amount */}
+                    <Field
+                      label="Paid Amount"
+                      id="paid-amount"
+                      value={form.paidAmount}
+                      onChange={(v) => setField("paidAmount", v)}
+                      placeholder="e.g. 5000"
+                      data-ocid="form.paid_amount.input"
+                    />
+                  </FieldGroup>
+                </div>
+              </section>
+
+              {/* ── Family Details ────────────────────────────────── */}
+              <section>
+                <SectionHeading
+                  icon={<Users size={14} />}
+                  color="purple"
+                  bgClass="bg-purple-50"
+                  borderClass="border-purple-200"
+                  textClass="text-purple-700"
+                >
+                  Family Details
+                </SectionHeading>
+                <div className="space-y-3">
+                  <FamilyCard
+                    label="Spouse"
+                    color="bg-pink-100 text-pink-700 border border-pink-200"
+                  >
+                    <FieldGroup>
+                      <Field
+                        label="Spouse Name"
+                        id="spouse-name"
+                        value={form.spouseName}
+                        onChange={(v) => setField("spouseName", v)}
+                        placeholder="Spouse's full name"
+                        data-ocid="form.spouse_name.input"
+                      />
+                      <Field
+                        label="Spouse Birth Date"
+                        id="spouse-birth-date"
+                        type="date"
+                        value={form.spouseBirthDate}
+                        onChange={(v) => setField("spouseBirthDate", v)}
+                        data-ocid="form.spouse_birth_date.input"
+                      />
+                    </FieldGroup>
+                  </FamilyCard>
+
+                  <FamilyCard
+                    label="Child 1"
+                    color="bg-indigo-100 text-indigo-700 border border-indigo-200"
+                  >
+                    <FieldGroup>
+                      <Field
+                        label="Children 1 Name"
+                        id="children1-name"
+                        value={form.children1Name}
+                        onChange={(v) => setField("children1Name", v)}
+                        placeholder="Child 1 name"
+                        data-ocid="form.children1_name.input"
+                      />
+                      <Field
+                        label="Children 1 Birth Date"
+                        id="children1-birth-date"
+                        type="date"
+                        value={form.children1BirthDate}
+                        onChange={(v) => setField("children1BirthDate", v)}
+                        data-ocid="form.children1_birth_date.input"
+                      />
+                    </FieldGroup>
+                  </FamilyCard>
+
+                  <FamilyCard
+                    label="Child 2"
+                    color="bg-violet-100 text-violet-700 border border-violet-200"
+                  >
+                    <FieldGroup>
+                      <Field
+                        label="Children 2 Name"
+                        id="children2-name"
+                        value={form.children2Name}
+                        onChange={(v) => setField("children2Name", v)}
+                        placeholder="Child 2 name"
+                        data-ocid="form.children2_name.input"
+                      />
+                      <Field
+                        label="Children 2 Birth Date"
+                        id="children2-birth-date"
+                        type="date"
+                        value={form.children2BirthDate}
+                        onChange={(v) => setField("children2BirthDate", v)}
+                        data-ocid="form.children2_birth_date.input"
+                      />
+                    </FieldGroup>
+                  </FamilyCard>
+
+                  <FamilyCard
+                    label="Child 3"
+                    color="bg-sky-100 text-sky-700 border border-sky-200"
+                  >
+                    <FieldGroup>
+                      <Field
+                        label="Children 3 Name"
+                        id="children3-name"
+                        value={form.children3Name}
+                        onChange={(v) => setField("children3Name", v)}
+                        placeholder="Child 3 name"
+                        data-ocid="form.children3_name.input"
+                      />
+                      <Field
+                        label="Children 3 Birth Date"
+                        id="children3-birth-date"
+                        type="date"
+                        value={form.children3BirthDate}
+                        onChange={(v) => setField("children3BirthDate", v)}
+                        data-ocid="form.children3_birth_date.input"
+                      />
+                    </FieldGroup>
+                  </FamilyCard>
+                </div>
+              </section>
+
+              {/* ── Remarks ──────────────────────────────────────── */}
+              <section>
+                <SectionHeading
+                  icon={<MessageSquare size={14} />}
+                  color="orange"
+                  bgClass="bg-orange-50"
+                  borderClass="border-orange-200"
+                  textClass="text-orange-700"
+                >
+                  Remarks
+                </SectionHeading>
+                <div className="rounded-xl border border-orange-100/80 bg-orange-50/20 px-4 py-4">
+                  <div className="flex flex-col gap-1.5">
+                    <Label
+                      htmlFor="remark"
+                      className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                    >
+                      Remark
+                    </Label>
+                    <Textarea
+                      id="remark"
+                      value={form.remark}
+                      onChange={(e) =>
+                        setField("remark", e.target.value.toUpperCase())
+                      }
+                      placeholder="Any additional notes or remarks"
+                      rows={3}
+                      style={{ textTransform: "uppercase" }}
+                      className="text-[14px] rounded-lg bg-white border-border/80 resize-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:border-primary transition-colors"
+                      data-ocid="form.remark.textarea"
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* ── Action row ───────────────────────────────────── */}
+              <div className="pt-2">
+                <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent mb-5" />
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <p className="text-[12px] text-muted-foreground/70">
+                    {mode === "new" ? (
+                      form.memberId ? (
+                        <span>
+                          New entry —{" "}
+                          <span
+                            className="font-semibold"
+                            style={{ color: "oklch(0.38 0.12 170)" }}
+                          >
+                            Member ID: {form.memberId}
+                          </span>
+                        </span>
+                      ) : (
+                        "Fill in the fields above to create a new customer record"
+                      )
+                    ) : form.memberId ? (
                       <span>
-                        New entry —{" "}
+                        Editing{" "}
                         <span
                           className="font-semibold"
                           style={{ color: "oklch(0.38 0.12 170)" }}
                         >
-                          Member ID: {form.memberId}
+                          Member #{form.memberId}
                         </span>
                       </span>
                     ) : (
-                      "Fill in the fields above to create a new customer record"
-                    )
-                  ) : form.memberId ? (
-                    <span>
-                      Editing{" "}
-                      <span
-                        className="font-semibold"
-                        style={{ color: "oklch(0.38 0.12 170)" }}
-                      >
-                        Member #{form.memberId}
-                      </span>
-                    </span>
-                  ) : (
-                    "No member loaded — fetch to populate or enter manually"
-                  )}
-                </p>
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="outline"
-                    onClick={handleClear}
-                    className="h-10 px-5 rounded-xl text-[14px] font-medium border-border hover:bg-secondary/80 transition-colors"
-                    data-ocid="form.cancel_button"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5 mr-2" />
-                    Clear
-                  </Button>
-                  <Button
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="h-11 px-8 rounded-xl text-[14px] font-semibold text-white transition-all"
-                    style={{
-                      background: isSaving
-                        ? "oklch(0.52 0.18 170 / 0.7)"
-                        : "linear-gradient(135deg, oklch(0.52 0.18 170) 0%, oklch(0.48 0.16 185) 100%)",
-                      boxShadow: isSaving
-                        ? "none"
-                        : "0 2px 16px 0 oklch(0.52 0.18 170 / 0.4)",
-                    }}
-                    data-ocid="form.submit_button"
-                  >
-                    {isSaving ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <Save className="h-4 w-4 mr-2" />
+                      "No member loaded — fetch to populate or enter manually"
                     )}
-                    {isSaving
-                      ? "Saving..."
-                      : mode === "new"
-                        ? "Save New Entry"
-                        : "Save / Update"}
-                  </Button>
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant="outline"
+                      onClick={handleClear}
+                      className="h-10 px-5 rounded-xl text-[14px] font-medium border-border hover:bg-secondary/80 transition-colors"
+                      data-ocid="form.cancel_button"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                      Clear
+                    </Button>
+                    <Button
+                      onClick={handleSave}
+                      disabled={isSaving}
+                      className="h-11 px-8 rounded-xl text-[14px] font-semibold text-white transition-all"
+                      style={{
+                        background: isSaving
+                          ? "oklch(0.52 0.18 170 / 0.7)"
+                          : "linear-gradient(135deg, oklch(0.52 0.18 170) 0%, oklch(0.48 0.16 185) 100%)",
+                        boxShadow: isSaving
+                          ? "none"
+                          : "0 2px 16px 0 oklch(0.52 0.18 170 / 0.4)",
+                      }}
+                      data-ocid="form.submit_button"
+                    >
+                      {isSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <Save className="h-4 w-4 mr-2" />
+                      )}
+                      {isSaving
+                        ? "Saving..."
+                        : mode === "new"
+                          ? "Save New Entry"
+                          : "Save / Update"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* ── Payment History content block ────────────────────── */}
+        {mode === "payment" && (
+          <div className="space-y-6">
+            {/* Lookup hero card */}
+            <div
+              className="rounded-2xl border overflow-hidden mb-6"
+              style={{
+                background:
+                  "linear-gradient(135deg, oklch(0.955 0.065 168) 0%, oklch(0.96 0.05 190) 100%)",
+                borderColor: "oklch(0.82 0.1 168)",
+                boxShadow:
+                  "0 2px 20px 0 oklch(0.52 0.18 170 / 0.12), 0 1px 4px 0 rgba(0,0,0,0.06)",
+              }}
+              data-ocid="payment.lookup.card"
+            >
+              <div className="px-6 pt-5 pb-6">
+                <p
+                  className="text-[11px] font-bold uppercase tracking-widest mb-4"
+                  style={{ color: "oklch(0.38 0.12 170)" }}
+                >
+                  Look Up Customer
+                </p>
+                <div className="flex gap-3">
+                  <Input
+                    type="tel"
+                    value={paymentLookupMobile}
+                    onChange={(e) => setPaymentLookupMobile(e.target.value)}
+                    placeholder="Enter mobile number…"
+                    className="flex-1 h-11 text-[15px] rounded-xl bg-white border-border/80"
+                    data-ocid="payment.lookup.input"
+                    onKeyDown={(e) =>
+                      e.key === "Enter" && handleFetchPaymentAccounts()
+                    }
+                  />
+                  <Button
+                    onClick={handleFetchPaymentAccounts}
+                    disabled={isFetchingPaymentAccounts}
+                    className="h-11 px-6 rounded-xl font-semibold text-[14px] shrink-0 text-white transition-all"
+                    style={{
+                      background: isFetchingPaymentAccounts
+                        ? "oklch(0.52 0.18 170 / 0.7)"
+                        : "linear-gradient(135deg, oklch(0.52 0.18 170) 0%, oklch(0.48 0.16 185) 100%)",
+                      boxShadow: isFetchingPaymentAccounts
+                        ? "none"
+                        : "0 2px 12px 0 oklch(0.52 0.18 170 / 0.4)",
+                    }}
+                    data-ocid="payment.lookup.button"
+                  >
+                    {isFetchingPaymentAccounts ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Search className="h-4 w-4 mr-2" />
+                    )}
+                    {isFetchingPaymentAccounts ? "Fetching..." : "Fetch"}
+                  </Button>
+                </div>
+
+                {/* Account cards grid */}
+                <div className="mt-5">
+                  <p
+                    className="text-[11px] font-semibold uppercase tracking-wide mb-3"
+                    style={{ color: "oklch(0.42 0.1 170)" }}
+                  >
+                    {paymentAccounts.length > 0
+                      ? `${paymentAccounts.length} account${paymentAccounts.length !== 1 ? "s" : ""} found — click to view payments`
+                      : "Account cards — enter a mobile number and click Fetch"}
+                  </p>
+                  <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
+                    {Array.from({ length: 10 }, (_, idx) => {
+                      const acc = paymentAccounts[idx] ?? null;
+                      const boxNum = idx + 1;
+                      const isSelected =
+                        acc !== null &&
+                        selectedPaymentMemberId === acc.memberId;
+                      const isLoading = isFetchingPayments && isSelected;
+                      return (
+                        <button
+                          key={boxNum}
+                          type="button"
+                          onClick={() =>
+                            acc && handleFetchPayments(acc.memberId)
+                          }
+                          disabled={acc === null || isFetchingPayments}
+                          className={`relative flex flex-col items-center justify-center rounded-xl border-2 text-center transition-all ${
+                            acc === null
+                              ? "border-dashed border-border/40 bg-muted/20 cursor-not-allowed opacity-50"
+                              : isSelected
+                                ? "border-teal-500 bg-teal-50 shadow-md cursor-pointer"
+                                : "border-border bg-white hover:border-teal-400 hover:bg-teal-50/50 cursor-pointer"
+                          }`}
+                          style={{
+                            minHeight: "60px",
+                            padding: "6px 4px",
+                            ...(isSelected
+                              ? {
+                                  borderColor: "oklch(0.52 0.18 170)",
+                                  boxShadow:
+                                    "0 0 0 3px oklch(0.52 0.18 170 / 0.15)",
+                                }
+                              : {}),
+                          }}
+                          data-ocid={`payment.lookup.item.${boxNum}`}
+                        >
+                          {isLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin text-teal-600" />
+                          ) : acc !== null ? (
+                            <span className="text-[10px] font-bold text-foreground leading-tight break-all px-0.5">
+                              {acc.memberId || `#${boxNum}`}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground/40 font-medium">
+                              {boxNum}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Payments table — shown when an account is selected */}
+            {selectedPaymentMemberId !== null && (
+              <div
+                className="rounded-2xl border overflow-hidden"
+                style={{
+                  background: "oklch(0.99 0.005 170)",
+                  borderColor: "oklch(0.88 0.04 170)",
+                  boxShadow:
+                    "0 1px 3px 0 rgba(0,0,0,0.06), 0 4px 20px 0 oklch(0.52 0.18 170 / 0.06)",
+                }}
+                data-ocid="payment.history.card"
+              >
+                {/* Section heading */}
+                <div
+                  className="flex items-center gap-2.5 px-6 py-4 border-b"
+                  style={{ borderColor: "oklch(0.88 0.04 170)" }}
+                >
+                  <span
+                    className="flex items-center justify-center w-6 h-6 rounded-md"
+                    style={{ background: "oklch(0.92 0.06 168)" }}
+                  >
+                    <ReceiptText
+                      size={13}
+                      style={{ color: "oklch(0.38 0.16 170)" }}
+                    />
+                  </span>
+                  <span
+                    className="text-[12px] font-bold uppercase tracking-widest"
+                    style={{ color: "oklch(0.38 0.12 170)" }}
+                  >
+                    Payment History
+                  </span>
+                  <span className="ml-1 text-[11px] text-muted-foreground">
+                    — {selectedPaymentMemberId}
+                  </span>
+                </div>
+
+                <div className="px-6 py-5">
+                  {isFetchingPayments ? (
+                    <div
+                      className="flex items-center justify-center py-12 gap-3"
+                      data-ocid="payment.history.loading_state"
+                    >
+                      <Loader2
+                        className="h-5 w-5 animate-spin"
+                        style={{ color: "oklch(0.52 0.18 170)" }}
+                      />
+                      <span className="text-[14px] text-muted-foreground">
+                        Loading payments…
+                      </span>
+                    </div>
+                  ) : paymentRows.length === 0 ? (
+                    <div
+                      className="text-center py-12"
+                      data-ocid="payment.history.empty_state"
+                    >
+                      <CreditCard
+                        className="h-10 w-10 mx-auto mb-3 opacity-20"
+                        style={{ color: "oklch(0.52 0.18 170)" }}
+                      />
+                      <p className="text-[14px] text-muted-foreground">
+                        No payments found for this account.
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <div
+                        className="rounded-xl border overflow-hidden"
+                        style={{ borderColor: "oklch(0.88 0.04 170)" }}
+                      >
+                        <Table data-ocid="payment.history.table">
+                          <TableHeader>
+                            <TableRow
+                              style={{
+                                background:
+                                  "linear-gradient(135deg, oklch(0.94 0.065 168) 0%, oklch(0.96 0.04 190) 100%)",
+                              }}
+                            >
+                              <TableHead
+                                className="text-[11px] font-bold uppercase tracking-wide"
+                                style={{ color: "oklch(0.38 0.12 170)" }}
+                              >
+                                Name
+                              </TableHead>
+                              <TableHead
+                                className="text-[11px] font-bold uppercase tracking-wide"
+                                style={{ color: "oklch(0.38 0.12 170)" }}
+                              >
+                                Date
+                              </TableHead>
+                              <TableHead
+                                className="text-[11px] font-bold uppercase tracking-wide text-right"
+                                style={{ color: "oklch(0.38 0.12 170)" }}
+                              >
+                                Amount
+                              </TableHead>
+                              <TableHead
+                                className="text-[11px] font-bold uppercase tracking-wide"
+                                style={{ color: "oklch(0.38 0.12 170)" }}
+                              >
+                                Method
+                              </TableHead>
+                              <TableHead
+                                className="text-[11px] font-bold uppercase tracking-wide"
+                                style={{ color: "oklch(0.38 0.12 170)" }}
+                              >
+                                Reference
+                              </TableHead>
+                              <TableHead
+                                className="text-[11px] font-bold uppercase tracking-wide"
+                                style={{ color: "oklch(0.38 0.12 170)" }}
+                              >
+                                Recorded By
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {paymentRows.map((row, i) => (
+                              <TableRow
+                                key={`${row.date}-${row.amount}-${i}`}
+                                className="hover:bg-teal-50/30 transition-colors"
+                                data-ocid={`payment.history.row.${i + 1}`}
+                              >
+                                <TableCell className="text-[13px] font-medium text-foreground py-3">
+                                  {row.member || "—"}
+                                </TableCell>
+                                <TableCell className="text-[13px] text-muted-foreground py-3 whitespace-nowrap">
+                                  {row.date || "—"}
+                                </TableCell>
+                                <TableCell
+                                  className="text-[13px] font-semibold text-right py-3"
+                                  style={{ color: "oklch(0.38 0.16 170)" }}
+                                >
+                                  {row.amount
+                                    ? `₹${Number(row.amount).toLocaleString("en-IN")}`
+                                    : "—"}
+                                </TableCell>
+                                <TableCell className="text-[13px] text-muted-foreground py-3">
+                                  {row.method || "—"}
+                                </TableCell>
+                                <TableCell className="text-[13px] text-muted-foreground py-3">
+                                  {row.reference || "—"}
+                                </TableCell>
+                                <TableCell className="text-[13px] text-muted-foreground py-3">
+                                  {row.recordedBy || "—"}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      {/* Summary row */}
+                      <div
+                        className="flex items-center justify-between mt-4 px-4 py-3 rounded-xl border"
+                        style={{
+                          background:
+                            "linear-gradient(135deg, oklch(0.94 0.065 168) 0%, oklch(0.96 0.04 190) 100%)",
+                          borderColor: "oklch(0.82 0.1 168)",
+                        }}
+                      >
+                        <span
+                          className="text-[12px] font-bold uppercase tracking-wide"
+                          style={{ color: "oklch(0.42 0.1 170)" }}
+                        >
+                          {paymentRows.length} payment
+                          {paymentRows.length !== 1 ? "s" : ""}
+                        </span>
+                        <span
+                          className="text-[14px] font-bold"
+                          style={{ color: "oklch(0.32 0.18 170)" }}
+                        >
+                          Total: ₹
+                          {paymentRows
+                            .reduce(
+                              (sum, r) => sum + (Number(r.amount) || 0),
+                              0,
+                            )
+                            .toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Footer ───────────────────────────────────────────── */}
         <footer className="mt-8 pb-6 text-center">
