@@ -274,6 +274,7 @@ function toDateInput(value: string): string {
 type AppMode = "new" | "update" | "payment";
 
 interface PaymentRow {
+  receipt?: string;
   member: string;
   membership: string;
   date: string;
@@ -1015,14 +1016,6 @@ export default function App() {
                   borderColor: "oklch(0.78 0.1 168)",
                 }}
               >
-                <div className="flex items-center gap-2 mb-3">
-                  <span
-                    className="text-[11px] font-bold uppercase tracking-widest"
-                    style={{ color: "oklch(0.38 0.12 170)" }}
-                  >
-                    Member ID
-                  </span>
-                </div>
                 <div className="flex flex-col gap-1.5 max-w-xs">
                   <Label
                     htmlFor="member-id"
@@ -1635,9 +1628,11 @@ export default function App() {
                   >
                     Payment History
                   </span>
-                  <span className="ml-1 text-[11px] text-muted-foreground">
-                    — {paymentLookupMobile}
-                  </span>
+                  {paymentRows.length > 0 && paymentRows[0]?.member && (
+                    <span className="ml-1 text-[11px] text-muted-foreground">
+                      — {paymentRows[0].member}
+                    </span>
+                  )}
                 </div>
 
                 <div className="px-6 py-5">
@@ -1686,6 +1681,12 @@ export default function App() {
                                 style={{ color: "oklch(0.38 0.12 170)" }}
                               >
                                 Membership
+                              </TableHead>
+                              <TableHead
+                                className="text-[11px] font-bold uppercase tracking-wide"
+                                style={{ color: "oklch(0.38 0.12 170)" }}
+                              >
+                                Receipt #
                               </TableHead>
                               <TableHead
                                 className="text-[11px] font-bold uppercase tracking-wide"
@@ -1747,6 +1748,9 @@ export default function App() {
                                         {row.membership || row.member || "—"}
                                       </TableCell>
                                       <TableCell className="text-[13px] text-muted-foreground py-3 whitespace-nowrap">
+                                        {row.receipt || "—"}
+                                      </TableCell>
+                                      <TableCell className="text-[13px] text-muted-foreground py-3 whitespace-nowrap">
                                         {row.date || "—"}
                                       </TableCell>
                                       <TableCell
@@ -1778,7 +1782,7 @@ export default function App() {
                                     }}
                                   >
                                     <TableCell
-                                      colSpan={2}
+                                      colSpan={3}
                                       className="text-[12px] font-bold py-2 pl-3"
                                       style={{ color: "oklch(0.38 0.12 170)" }}
                                     >
