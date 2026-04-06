@@ -305,6 +305,8 @@ export default function App() {
   const [paymentLookupMobile, setPaymentLookupMobile] = useState("");
   const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([]);
   const [isFetchingPayments, setIsFetchingPayments] = useState(false);
+  const [selectedPaymentMember, setSelectedPaymentMember] =
+    useState<string>("");
 
   // Form state — flat CustomerRecord
   const [form, setForm] = useState<CustomerRecord>(() => ({
@@ -642,6 +644,7 @@ export default function App() {
     }
     setIsFetchingPayments(true);
     setPaymentRows([]);
+    setSelectedPaymentMember("");
     try {
       const url = `${resolvedUrl}?action=fetchPayments&phone=${encodeURIComponent(paymentLookupMobile.trim())}`;
       const res = await fetch(url);
@@ -1628,10 +1631,31 @@ export default function App() {
                   >
                     Payment History
                   </span>
-                  {paymentRows.length > 0 && paymentRows[0]?.member && (
-                    <span className="ml-1 text-[11px] text-muted-foreground">
-                      — {paymentRows[0].member}
-                    </span>
+                  {paymentRows.length > 0 && (
+                    <select
+                      value={selectedPaymentMember}
+                      onChange={(e) => setSelectedPaymentMember(e.target.value)}
+                      className="ml-2 text-[12px] rounded-lg border px-2 py-1 font-medium focus:outline-none focus:ring-1"
+                      style={{
+                        borderColor: "oklch(0.82 0.1 168)",
+                        background: "white",
+                        color: selectedPaymentMember
+                          ? "oklch(0.28 0.18 170)"
+                          : "oklch(0.55 0.06 170)",
+                        minWidth: 160,
+                      }}
+                    >
+                      <option value="">All Members</option>
+                      {[
+                        ...new Set(
+                          paymentRows.map((r) => r.member).filter(Boolean),
+                        ),
+                      ].map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
                   )}
                 </div>
 
@@ -1723,11 +1747,16 @@ export default function App() {
                           <TableBody>
                             {(() => {
                               // Group rows by membership
+                              const filteredRows = selectedPaymentMember
+                                ? paymentRows.filter(
+                                    (r) => r.member === selectedPaymentMember,
+                                  )
+                                : paymentRows;
                               const groups: {
                                 label: string;
-                                rows: typeof paymentRows;
+                                rows: typeof filteredRows;
                               }[] = [];
-                              for (const row of paymentRows) {
+                              for (const row of filteredRows) {
                                 const label =
                                   row.membership || row.member || "—";
                                 const existing = groups.find(
@@ -1812,34 +1841,43 @@ export default function App() {
                       </div>
 
                       {/* Grand total row */}
-                      <div
-                        className="flex items-center justify-between mt-4 px-4 py-3 rounded-xl border"
-                        style={{
-                          background:
-                            "linear-gradient(135deg, oklch(0.94 0.065 168) 0%, oklch(0.96 0.04 190) 100%)",
-                          borderColor: "oklch(0.82 0.1 168)",
-                        }}
-                      >
-                        <span
-                          className="text-[12px] font-bold uppercase tracking-wide"
-                          style={{ color: "oklch(0.42 0.1 170)" }}
-                        >
-                          {paymentRows.length} payment
-                          {paymentRows.length !== 1 ? "s" : ""}
-                        </span>
-                        <span
-                          className="text-[14px] font-bold"
-                          style={{ color: "oklch(0.32 0.18 170)" }}
-                        >
-                          Grand Total: ₹
-                          {paymentRows
-                            .reduce(
-                              (sum, r) => sum + (Number(r.amount) || 0),
-                              0,
+                      {(() => {
+                        const displayedRows = selectedPaymentMember
+                          ? paymentRows.filter(
+                              (r) => r.member === selectedPaymentMember,
                             )
-                            .toLocaleString("en-IN")}
-                        </span>
-                      </div>
+                          : paymentRows;
+                        return (
+                          <div
+                            className="flex items-center justify-between mt-4 px-4 py-3 rounded-xl border"
+                            style={{
+                              background:
+                                "linear-gradient(135deg, oklch(0.94 0.065 168) 0%, oklch(0.96 0.04 190) 100%)",
+                              borderColor: "oklch(0.82 0.1 168)",
+                            }}
+                          >
+                            <span
+                              className="text-[12px] font-bold uppercase tracking-wide"
+                              style={{ color: "oklch(0.42 0.1 170)" }}
+                            >
+                              {displayedRows.length} payment
+                              {displayedRows.length !== 1 ? "s" : ""}
+                            </span>
+                            <span
+                              className="text-[14px] font-bold"
+                              style={{ color: "oklch(0.32 0.18 170)" }}
+                            >
+                              Grand Total: ₹
+                              {displayedRows
+                                .reduce(
+                                  (sum, r) => sum + (Number(r.amount) || 0),
+                                  0,
+                                )
+                                .toLocaleString("en-IN")}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
