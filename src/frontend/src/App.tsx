@@ -697,7 +697,16 @@ export default function App() {
         throw new Error("Invalid response from server.");
       }
       if (!parsed.success) throw new Error(parsed.error || "Fetch failed.");
-      setPaymentRows(parsed.payments || []);
+      const rows = (parsed.payments || []).slice().sort((a, b) => {
+        // Parse dd-mm-yyyy [hh:mm am/pm] dates for comparison
+        const parseDate = (s: string) => {
+          const parts = s.split(" ");
+          const [d, m, y] = parts[0].split("-").map(Number);
+          return new Date(y, m - 1, d).getTime();
+        };
+        return parseDate(b.date) - parseDate(a.date);
+      });
+      setPaymentRows(rows);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to load payments.",
@@ -1639,14 +1648,6 @@ export default function App() {
 
                 {/* Account cards grid */}
                 <div className="mt-5">
-                  <p
-                    className="text-[11px] font-semibold uppercase tracking-wide mb-3"
-                    style={{ color: "oklch(0.42 0.1 170)" }}
-                  >
-                    {paymentAccounts.length > 0
-                      ? `${paymentAccounts.length} account${paymentAccounts.length !== 1 ? "s" : ""} found — click to view payments`
-                      : "Account cards — enter a mobile number and click Fetch"}
-                  </p>
                   <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
                     {Array.from({ length: 10 }, (_, idx) => {
                       const acc = paymentAccounts[idx] ?? null;
