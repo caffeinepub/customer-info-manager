@@ -265,7 +265,7 @@ export default function App() {
   // Mode switcher
   const [mode, setMode] = useState<AppMode>("new");
 
-  // Cached script URL — loaded from canister on mount, refreshed after Settings save
+  // Cached script URL — loaded from localStorage on mount, refreshed after Settings save
   const cachedScriptUrl = useRef<string>("");
 
   // Lookup state
@@ -296,9 +296,6 @@ export default function App() {
   const [schemeOptions, setSchemeOptions] = useState<string[]>([
     ...DEFAULT_SCHEME_OPTIONS,
   ]);
-  // Settings load state
-  const [_settingsLoaded, setSettingsLoaded] = useState(false);
-  const [_settingsLoadError, setSettingsLoadError] = useState(false);
   // Temp state for settings editing
   const [settingsSchemeOptions, setSettingsSchemeOptions] = useState<string[]>([
     ...DEFAULT_SCHEME_OPTIONS,
@@ -333,37 +330,27 @@ export default function App() {
     });
   }, []);
 
-  // Load settings from canister on mount
+  // Load settings from localStorage on mount
   useEffect(() => {
-    (async () => {
-      try {
-        const actor = await createActorWithConfig();
-        const [url, optsJson, giftCard] = (await (
-          actor as any
-        ).getSettings()) as [string, string, string];
-        cachedScriptUrl.current = url;
-        // Parse scheme options
-        let opts = DEFAULT_SCHEME_OPTIONS;
-        try {
-          const parsed = JSON.parse(optsJson);
-          if (Array.isArray(parsed) && parsed.length === 4) opts = parsed;
-        } catch {}
-        const defaultGift = giftCard || "11000";
-        const scheme = opts[1] ?? "5000";
-        setSchemeOptions(opts);
-        setForm({
-          ...emptyRecord,
-          schemeAmount: scheme,
-          installmentAmount: String(Number(scheme) * 15),
-          giftCardAmount: defaultGift,
-          paidAmount: calcPaidAmount(scheme, defaultGift),
-        });
-        setSettingsLoaded(true);
-      } catch {
-        setSettingsLoadError(true);
-        setSettingsLoaded(true);
-      }
-    })();
+    const url = localStorage.getItem("scriptUrl") || "";
+    const optsJson = localStorage.getItem("schemeOptions") || "";
+    const giftCard = localStorage.getItem("defaultGiftCardAmount") || "11000";
+    cachedScriptUrl.current = url;
+    let opts = DEFAULT_SCHEME_OPTIONS;
+    try {
+      const parsed = JSON.parse(optsJson);
+      if (Array.isArray(parsed) && parsed.length === 4) opts = parsed;
+    } catch {}
+    const defaultGift = giftCard || "11000";
+    const scheme = opts[1] ?? "5000";
+    setSchemeOptions(opts);
+    setForm({
+      ...emptyRecord,
+      schemeAmount: scheme,
+      installmentAmount: String(Number(scheme) * 15),
+      giftCardAmount: defaultGift,
+      paidAmount: calcPaidAmount(scheme, defaultGift),
+    });
   }, []);
 
   /** Get the cached script URL */
@@ -474,127 +461,41 @@ export default function App() {
         toast.error(`Failed to load: ${parsed.error}`);
         return;
       }
-      const data = parsed.data as Record<string, unknown>;
+      // Apps Script returns { success: true, record: { "Member ID": "...", ... } }
+      const data = (parsed.record ?? parsed.data ?? {}) as Record<
+        string,
+        unknown
+      >;
       setForm({
-        memberId: (data.memberId ??
-          data.member_id ??
-          data.MemberId ??
-          "") as string,
-        groupCode: (data.groupCode ??
-          data.group_code ??
-          data.GroupCode ??
-          "") as string,
-        membershipNumber: (data.membershipNumber ??
-          data.membership_number ??
-          data.MembershipNumber ??
-          "") as string,
-        dateOfJoining: toDateInput(
-          (data.dateOfJoining ??
-            data.date_of_joining ??
-            data.DateOfJoining ??
-            "") as string,
-        ),
-        reference: (data.reference ?? data.Reference ?? "") as string,
-        fullName: (data.fullName ??
-          data.full_name ??
-          data.FullName ??
-          data.name ??
-          "") as string,
-        fullAddress: (data.fullAddress ??
-          data.full_address ??
-          data.FullAddress ??
-          data.address ??
-          "") as string,
-        mobileNumber: (data.mobileNumber ??
-          data.mobile_number ??
-          data.MobileNumber ??
-          data.mobile ??
-          "") as string,
-        altMobileNumber: (data.altMobileNumber ??
-          data.alt_mobile_number ??
-          data.AltMobileNumber ??
-          data.alt_mobile ??
-          "") as string,
-        dateOfBirth: toDateInput(
-          (data.dateOfBirth ??
-            data.date_of_birth ??
-            data.DateOfBirth ??
-            data.dob ??
-            "") as string,
-        ),
-        anniversaryDate: toDateInput(
-          (data.anniversaryDate ??
-            data.anniversary_date ??
-            data.AnniversaryDate ??
-            "") as string,
-        ),
-        paidAmount: (data.paidAmount ??
-          data.paid_amount ??
-          data.PaidAmount ??
-          data.amount ??
-          data.Amount ??
-          "") as string,
-        giftCardAmount: (data.giftCardAmount ??
-          data.gift_card_amount ??
-          data.GiftCardAmount ??
-          "") as string,
-        schemeAmount: (data.schemeAmount ??
-          data.scheme_amount ??
-          data.SchemeAmount ??
-          "") as string,
+        memberId: (data["Member ID"] ?? "") as string,
+        groupCode: (data["Group Code"] ?? "") as string,
+        membershipNumber: (data["Membership No"] ?? "") as string,
+        dateOfJoining: toDateInput((data["Joining Date"] ?? "") as string),
+        reference: (data.Reference ?? "") as string,
+        fullName: (data["Full Name"] ?? "") as string,
+        fullAddress: (data.Address ?? "") as string,
+        mobileNumber: (data["Mobile 1"] ?? "") as string,
+        altMobileNumber: (data["Mobile 2"] ?? "") as string,
+        dateOfBirth: toDateInput((data.DOB ?? "") as string),
+        anniversaryDate: toDateInput((data.Anniversary ?? "") as string),
+        paidAmount: String(data["Paid Amount"] ?? ""),
+        giftCardAmount: String(data["Gift Card Amount"] ?? ""),
+        schemeAmount: String(data["Scheme Amount"] ?? ""),
         installmentAmount: (() => {
-          const raw = (data.installmentAmount ??
-            data.installment_amount ??
-            data.InstallmentAmount ??
-            "") as string;
-          if (raw) return raw;
-          const scheme = (data.schemeAmount ??
-            data.scheme_amount ??
-            data.SchemeAmount ??
-            "") as string;
+          const raw = String(data["Installment Amount"] ?? "");
+          if (raw && raw !== "0") return raw;
+          const scheme = String(data["Scheme Amount"] ?? "");
           return scheme ? String(Number(scheme) * 15) : "";
         })(),
-        spouseName: (data.spouseName ??
-          data.spouse_name ??
-          data.SpouseName ??
-          "") as string,
-        spouseBirthDate: toDateInput(
-          (data.spouseBirthDate ??
-            data.spouse_birth_date ??
-            data.SpouseBirthDate ??
-            "") as string,
-        ),
-        children1Name: (data.children1Name ??
-          data.children1_name ??
-          data.Children1Name ??
-          "") as string,
-        children1BirthDate: toDateInput(
-          (data.children1BirthDate ??
-            data.children1_birth_date ??
-            data.Children1BirthDate ??
-            "") as string,
-        ),
-        children2Name: (data.children2Name ??
-          data.children2_name ??
-          data.Children2Name ??
-          "") as string,
-        children2BirthDate: toDateInput(
-          (data.children2BirthDate ??
-            data.children2_birth_date ??
-            data.Children2BirthDate ??
-            "") as string,
-        ),
-        children3Name: (data.children3Name ??
-          data.children3_name ??
-          data.Children3Name ??
-          "") as string,
-        children3BirthDate: toDateInput(
-          (data.children3BirthDate ??
-            data.children3_birth_date ??
-            data.Children3BirthDate ??
-            "") as string,
-        ),
-        remark: (data.remark ?? data.Remark ?? "") as string,
+        spouseName: (data["Spouse Name"] ?? "") as string,
+        spouseBirthDate: toDateInput((data["Spouse DOB"] ?? "") as string),
+        children1Name: (data["Child 1 Name"] ?? "") as string,
+        children1BirthDate: toDateInput((data["Child 1 DOB"] ?? "") as string),
+        children2Name: (data["Child 2 Name"] ?? "") as string,
+        children2BirthDate: toDateInput((data["Child 2 DOB"] ?? "") as string),
+        children3Name: (data["Child 3 Name"] ?? "") as string,
+        children3BirthDate: toDateInput((data["Child 3 DOB"] ?? "") as string),
+        remark: (data.Remarks ?? "") as string,
       });
       toast.success("Customer data loaded successfully.");
     } catch (err) {
@@ -622,17 +523,34 @@ export default function App() {
         );
         return;
       }
-      const formToSave = {
-        ...form,
-        dateOfJoining: formatDateForSheet(form.dateOfJoining),
-        dateOfBirth: formatDateForSheet(form.dateOfBirth),
-        anniversaryDate: formatDateForSheet(form.anniversaryDate),
-        spouseBirthDate: formatDateForSheet(form.spouseBirthDate),
-        children1BirthDate: formatDateForSheet(form.children1BirthDate),
-        children2BirthDate: formatDateForSheet(form.children2BirthDate),
-        children3BirthDate: formatDateForSheet(form.children3BirthDate),
+      // Map camelCase form fields to exact Google Sheet column headers
+      const sheetPayload: Record<string, string | number> = {
+        "Member ID": form.memberId.trim().toUpperCase(),
+        "Group Code": form.groupCode.trim().toUpperCase(),
+        "Membership No": form.membershipNumber.trim().toUpperCase(),
+        "Joining Date": formatDateForSheet(form.dateOfJoining),
+        Reference: form.reference.trim().toUpperCase(),
+        "Full Name": form.fullName.trim().toUpperCase(),
+        Address: form.fullAddress.trim().toUpperCase(),
+        "Mobile 1": form.mobileNumber.trim(),
+        "Mobile 2": form.altMobileNumber.trim(),
+        DOB: formatDateForSheet(form.dateOfBirth),
+        Anniversary: formatDateForSheet(form.anniversaryDate),
+        "Paid Amount": Number.parseFloat(form.paidAmount) || 0,
+        "Gift Card Amount": Number.parseFloat(form.giftCardAmount) || 0,
+        "Scheme Amount": Number.parseFloat(form.schemeAmount) || 0,
+        "Installment Amount": Number.parseFloat(form.installmentAmount) || 0,
+        "Spouse Name": form.spouseName.trim().toUpperCase(),
+        "Spouse DOB": formatDateForSheet(form.spouseBirthDate),
+        "Child 1 Name": form.children1Name.trim().toUpperCase(),
+        "Child 1 DOB": formatDateForSheet(form.children1BirthDate),
+        "Child 2 Name": form.children2Name.trim().toUpperCase(),
+        "Child 2 DOB": formatDateForSheet(form.children2BirthDate),
+        "Child 3 Name": form.children3Name.trim().toUpperCase(),
+        "Child 3 DOB": formatDateForSheet(form.children3BirthDate),
+        Remarks: form.remark.trim().toUpperCase(),
       };
-      const dataEncoded = encodeURIComponent(JSON.stringify(formToSave));
+      const dataEncoded = encodeURIComponent(JSON.stringify(sheetPayload));
       const url = `${resolvedUrl}?action=save&data=${dataEncoded}`;
       const res = await fetch(url);
       const text = await res.text();
@@ -694,7 +612,7 @@ export default function App() {
     toast("Form cleared.");
   };
 
-  // Open settings — read from canister state already loaded
+  // Open settings — read from localStorage state already loaded
   const handleOpenSettings = () => {
     setSettingsOpen(true);
     setUrlWarning("");
@@ -718,36 +636,31 @@ export default function App() {
     }
   };
 
-  // Save settings — persists to canister
-  const handleSaveSettings = async () => {
-    try {
-      const actor = await createActorWithConfig();
-      await (actor as any).saveSettings(
-        scriptUrl,
-        JSON.stringify(settingsSchemeOptions),
-        settingsGiftCardDefault,
-      );
-      cachedScriptUrl.current = scriptUrl;
-      setSchemeOptions([...settingsSchemeOptions]);
-      setSettingsOpen(false);
-      toast.success(
-        scriptUrl.trim()
-          ? "Settings saved successfully."
-          : "Settings saved (script URL cleared).",
-      );
-      // Update form defaults with new gift card
-      setForm((prev) => {
-        const newGift = settingsGiftCardDefault;
-        return {
-          ...prev,
-          giftCardAmount: newGift,
-          paidAmount: calcPaidAmount(prev.schemeAmount, newGift),
-        };
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to save settings: ${message}`);
-    }
+  // Save settings — persists to localStorage
+  const handleSaveSettings = () => {
+    localStorage.setItem("scriptUrl", scriptUrl);
+    localStorage.setItem(
+      "schemeOptions",
+      JSON.stringify(settingsSchemeOptions),
+    );
+    localStorage.setItem("defaultGiftCardAmount", settingsGiftCardDefault);
+    cachedScriptUrl.current = scriptUrl;
+    setSchemeOptions([...settingsSchemeOptions]);
+    setSettingsOpen(false);
+    toast.success(
+      scriptUrl.trim()
+        ? "Settings saved successfully."
+        : "Settings saved (script URL cleared).",
+    );
+    // Update form defaults with new gift card
+    setForm((prev) => {
+      const newGift = settingsGiftCardDefault;
+      return {
+        ...prev,
+        giftCardAmount: newGift,
+        paidAmount: calcPaidAmount(prev.schemeAmount, newGift),
+      };
+    });
   };
 
   // Build the 10-box grid
