@@ -263,9 +263,11 @@ function formatDateForSheet(dateStr: string): string {
 /** Convert any date string to YYYY-MM-DD for HTML date inputs */
 function toDateInput(value: string): string {
   if (!value) return "";
+  // Already in YYYY-MM-DD format (from HTML date input)
   if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
-  const d = new Date(value);
-  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  // Handle dd-mm-yyyy format (returned from Google Sheets)
+  const ddmmyyyy = /^(\d{2})-(\d{2})-(\d{4})/.exec(value);
+  if (ddmmyyyy) return `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
   return "";
 }
 
@@ -493,53 +495,60 @@ export default function App() {
         toast.error(`Failed to load: ${parsed.error}`);
         return;
       }
+      if (!parsed.success && parsed.error) {
+        toast.error(`Failed to load: ${parsed.error}`);
+        return;
+      }
       // Apps Script returns { success: true, record: { "MEMBER_ID": "...", ... } }
       const data = (parsed.record ?? parsed.data ?? {}) as Record<
         string,
         unknown
       >;
+      console.log("[fetchByMemberId] response keys:", Object.keys(data));
+      console.log("[fetchByMemberId] full record:", data);
+      const g = (newKey: string, oldKey: string) =>
+        (data[newKey] ?? data[oldKey] ?? "") as string;
       setForm({
-        memberId: (data.MEMBER_ID ?? "") as string,
-        groupCode: (data.MEMBERSHIP_TITLE ?? "") as string,
-        membershipNumber: (data["MEMBERSHIP NO."] ?? "") as string,
-        dateOfJoining: toDateInput((data.START_DATE ?? "") as string),
-        reference: (data.MEMBER_REFERENCE ?? "") as string,
-        fullName: (data.MEMBER_NAME ?? "") as string,
-        fullAddress: (data.MEMBER_ADDRESS ?? "") as string,
-        mobileNumber: (data["MEMBER_PHONE 1"] ?? "") as string,
-        altMobileNumber: (data["MEMBER_PHONE 2"] ?? "") as string,
-        dateOfBirth: toDateInput((data.MEMBER_BIRTH_DATE ?? "") as string),
+        memberId: g("MEMBER_ID", "Member ID"),
+        groupCode: g("MEMBERSHIP_TITLE", "Group Code"),
+        membershipNumber: (data["MEMBERSHIP NO."] ??
+          data["Membership No"] ??
+          "") as string,
+        dateOfJoining: toDateInput(g("START_DATE", "Joining Date")),
+        reference: g("MEMBER_REFERENCE", "Reference"),
+        fullName: g("MEMBER_NAME", "Full Name"),
+        fullAddress: g("MEMBER_ADDRESS", "Address"),
+        mobileNumber: (data["MEMBER_PHONE 1"] ??
+          data["Mobile 1"] ??
+          "") as string,
+        altMobileNumber: (data["MEMBER_PHONE 2"] ??
+          data["Mobile 2"] ??
+          "") as string,
+        dateOfBirth: toDateInput(g("MEMBER_BIRTH_DATE", "DOB")),
         anniversaryDate: toDateInput(
-          (data.MEMBER_ANNIVERSARY_DATE ?? "") as string,
+          g("MEMBER_ANNIVERSARY_DATE", "Anniversary"),
         ),
-        paidAmount: String(data.PAID_AMOUNT ?? ""),
-        giftCardAmount: String(data.GIFT_CARD_AMOUNT ?? ""),
-        schemeAmount: (() => {
-          // SCHEME_AMOUNT is not stored in sheet; derive from INSTALLMENT_AMOUNT / 15
-          const inst = Number(data.INSTALLMENT_AMOUNT ?? 0);
-          return inst ? String(inst / 15) : "";
-        })(),
-        installmentAmount: (() => {
-          const raw = String(data.INSTALLMENT_AMOUNT ?? "");
-          return raw && raw !== "0" ? raw : "";
-        })(),
-        spouseName: (data.MEMBER_SPOUSE_NAME ?? "") as string,
+        paidAmount: String(data.PAID_AMOUNT ?? data["Paid Amount"] ?? ""),
+        giftCardAmount: String(
+          data.GIFT_CARD_AMOUNT ?? data["Gift Card Amount"] ?? "",
+        ),
+        schemeAmount: String(
+          data.INSTALLMENT_AMOUNT ?? data["Installment Amount"] ?? "",
+        ),
+        installmentAmount: String(
+          data.TOTAL_AMOUNT ?? data["Total Amount"] ?? "",
+        ),
+        spouseName: g("MEMBER_SPOUSE_NAME", "Spouse Name"),
         spouseBirthDate: toDateInput(
-          (data.MEMBER_SPOUSE_BIRTH_DATE ?? "") as string,
+          g("MEMBER_SPOUSE_BIRTH_DATE", "Spouse DOB"),
         ),
-        children1Name: (data.CHILD_1_NAME ?? "") as string,
-        children1BirthDate: toDateInput(
-          (data.CHILD_1_BIRTH_DATE ?? "") as string,
-        ),
-        children2Name: (data.CHILD_2_NAME ?? "") as string,
-        children2BirthDate: toDateInput(
-          (data.CHILD_2_BIRTH_DATE ?? "") as string,
-        ),
-        children3Name: (data.CHILD_3_NAME ?? "") as string,
-        children3BirthDate: toDateInput(
-          (data.CHILD_3_BIRTH_DATE ?? "") as string,
-        ),
-        remark: (data.GIFT_INFO ?? "") as string,
+        children1Name: g("CHILD_1_NAME", "Child 1 Name"),
+        children1BirthDate: toDateInput(g("CHILD_1_BIRTH_DATE", "Child 1 DOB")),
+        children2Name: g("CHILD_2_NAME", "Child 2 Name"),
+        children2BirthDate: toDateInput(g("CHILD_2_BIRTH_DATE", "Child 2 DOB")),
+        children3Name: g("CHILD_3_NAME", "Child 3 Name"),
+        children3BirthDate: toDateInput(g("CHILD_3_BIRTH_DATE", "Child 3 DOB")),
+        remark: g("GIFT_INFO", "Remarks"),
       });
       toast.success("Customer data loaded successfully.");
     } catch (err) {
@@ -582,10 +591,8 @@ export default function App() {
         MEMBER_ANNIVERSARY_DATE: formatDateForSheet(form.anniversaryDate),
         PAID_AMOUNT: Number.parseFloat(form.paidAmount) || 0,
         GIFT_CARD_AMOUNT: Number.parseFloat(form.giftCardAmount) || 0,
-        INSTALLMENT_AMOUNT: Number.parseFloat(form.installmentAmount) || 0,
-        TOTAL_AMOUNT:
-          (Number.parseFloat(form.giftCardAmount) || 0) +
-          (Number.parseFloat(form.paidAmount) || 0),
+        INSTALLMENT_AMOUNT: Number.parseFloat(form.schemeAmount) || 0,
+        TOTAL_AMOUNT: Number.parseFloat(form.installmentAmount) || 0,
         MEMBER_SPOUSE_NAME: form.spouseName.trim().toUpperCase(),
         MEMBER_SPOUSE_BIRTH_DATE: formatDateForSheet(form.spouseBirthDate),
         CHILD_1_NAME: form.children1Name.trim().toUpperCase(),
@@ -679,7 +686,7 @@ export default function App() {
     setIsFetchingPayments(true);
     setPaymentRows([]);
     try {
-      const url = `${resolvedUrl}?action=fetchPayments&memberId=${encodeURIComponent(memberId)}`;
+      const url = `${resolvedUrl}?action=fetchPayments&phone=${encodeURIComponent(paymentLookupMobile.trim())}`;
       const res = await fetch(url);
       const text = await res.text();
       let parsed: { success: boolean; payments?: PaymentRow[]; error?: string };
@@ -1263,7 +1270,7 @@ export default function App() {
                         htmlFor="scheme-amount"
                         className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
                       >
-                        Scheme Amount
+                        Scheme Amount (P/M Inst.)
                       </Label>
                       <select
                         id="scheme-amount"
@@ -1299,7 +1306,7 @@ export default function App() {
                         htmlFor="installment-amount"
                         className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
                       >
-                        Installment Amount
+                        Total Amount (15x Inst.)
                       </Label>
                       <input
                         id="installment-amount"
@@ -1316,7 +1323,7 @@ export default function App() {
                         data-ocid="form.installment_amount.input"
                       />
                       <span className="text-[10px] text-muted-foreground">
-                        Auto-calculated: Scheme Amount × 15
+                        Auto-calculated: Scheme Amount (P/M Inst.) × 15
                       </span>
                     </div>
 
